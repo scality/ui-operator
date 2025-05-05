@@ -5,4 +5,4 @@ metadata:
   name: toto
   namespace: ui-operator-system
 spec:
-  shellUIimage: "monpot3/nvme-exporter-test:0.0.13"
+  shellUIimage: ghcr.io/scality/metalk8s/shell-ui:v130.0.0-dev-130.0.0-alpha.2-77-gce11d6eff
