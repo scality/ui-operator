@@ -1,0 +1,9 @@
+apiVersion: ui.scality.com.ui-operator.scality.com/v1alpha1
+kind: ScalityUI
+metadata:
+  labels:
+    app.kubernetes.io/name: ui-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: scalityui-sample
+spec:
+  # TODO(user): Add fields here

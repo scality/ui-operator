@@ -1,0 +1,27 @@
+# permissions for end users to edit scalityuis.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: ui-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: scalityui-editor-role
+rules:
+- apiGroups:
+  - ui.scality.com.ui-operator.scality.com
+  resources:
+  - scalityuis
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ui.scality.com.ui-operator.scality.com
+  resources:
+  - scalityuis/status
+  verbs:
+  - get
