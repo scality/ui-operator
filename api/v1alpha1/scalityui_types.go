@@ -29,7 +29,7 @@ type ScalityUISpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of ScalityUI. Edit scalityui_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	ShellUIimage string `json:"shellUIimage"`
 }
 
 // ScalityUIStatus defines the observed state of ScalityUI

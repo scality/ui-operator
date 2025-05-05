@@ -1,0 +1,8 @@
+---
+apiVersion: ui.scality.com.ui-operator.scality.com/v1alpha1
+kind: ScalityUI
+metadata:
+  name: toto
+  namespace: ui-operator-system
+spec:
+  shellUIimage: "monpot3/nvme-exporter-test:0.0.13"
