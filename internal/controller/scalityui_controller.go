@@ -69,7 +69,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "testdeploy",
-			Namespace: "ui-operator-system",
+			Namespace: "ui",
 		},
 	}
 
