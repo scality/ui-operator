@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/go-logr/logr"
@@ -60,13 +61,20 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	scalityui := &uiscalitycomv1alpha1.ScalityUI{}
 	err := r.Client.Get(ctx, req.NamespacedName, scalityui)
 
-	testMeta := metav1.ObjectMeta{
-		Name:      "testdeploy",
-		Namespace: "ui-operator-system",
+	if err != nil {
+		r.Log.Error(err, "Failed to get ScalityUI")
+		return ctrl.Result{}, err
 	}
-	testdeploy := &appsv1.Deployment{ // Any cluster object you want to create.
-		ObjectMeta: testMeta,
-		Spec: appsv1.DeploymentSpec{
+
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "testdeploy",
+			Namespace: "ui-operator-system",
+		},
+	}
+
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
+		deploy.Spec = appsv1.DeploymentSpec{
 			Replicas: &[]int32{1}[0],
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"app": "testdeploy"},
@@ -77,25 +85,30 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
-						{Name: "testdeploy", Image: "testdeploy"},
+						{Name: "shell-ui", Image: scalityui.Spec.ShellUIimage},
 					},
 				},
 			},
-		},
-	}
-
-	test := r.Client.Create(ctx, testdeploy)
-
-	r.Log.Info("Create debug", "deploy create", test)
+		}
+		return nil
+	})
 
 	if err != nil {
-		r.Log.Error(err, "Failed to get ScalityUI")
+		r.Log.Error(err, "Failed to create or update deployment")
 		return ctrl.Result{}, err
 	}
 
-	r.Log.Info("ScalityUI", "debug", scalityui.Spec.ShellUIimage)
-	// 	fmt.Println("Reconcile", req)
+	// Log the operation result
+	switch op {
+	case controllerutil.OperationResultCreated:
+		r.Log.Info("Deployment created", "name", deploy.Name)
+	case controllerutil.OperationResultUpdated:
+		r.Log.Info("Deployment updated", "name", deploy.Name)
+	case controllerutil.OperationResultNone:
+		r.Log.Info("Deployment unchanged", "name", deploy.Name)
+	}
 
+	r.Log.Info("ScalityUI", "debug", scalityui.Spec.ShellUIimage)
 	r.Log.Info("ctx", "ctx", ctx)
 
 	// TODO(user): your logic here
