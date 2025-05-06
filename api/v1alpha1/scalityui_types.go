@@ -30,6 +30,7 @@ type ScalityUISpec struct {
 
 	// Foo is an example field of ScalityUI. Edit scalityui_types.go to remove/update
 	ShellUIimage string `json:"shellUIimage"`
+	ProductName  string `json:"productName"`
 }
 
 // ScalityUIStatus defines the observed state of ScalityUI

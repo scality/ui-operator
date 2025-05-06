@@ -39,11 +39,14 @@ spec:
           spec:
             description: ScalityUISpec defines the desired state of ScalityUI
             properties:
+              productName:
+                type: string
               shellUIimage:
                 description: Foo is an example field of ScalityUI. Edit scalityui_types.go
                   to remove/update
                 type: string
             required:
+            - productName
             - shellUIimage
             type: object
           status:

@@ -7,7 +7,7 @@ metadata:
     app: test-service
 spec:
   selector:
-    app: test-service
+    app: testdeploy
   ports:
     - protocol: TCP
       port: 80

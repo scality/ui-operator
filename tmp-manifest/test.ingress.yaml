@@ -6,7 +6,7 @@ metadata:
     nginx.ingress.kubernetes.io/rewrite-target: /$1
   namespace: ui
 spec:
-  ingressClassName: nginx-control-plane
+  # ingressClassName: nginx-control-plane
   rules:
     - http:
         paths:
