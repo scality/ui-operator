@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- ui_v1alpha1_scalityui.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

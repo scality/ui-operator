@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: scality-ui
+  namespace: ui
+  labels:
+    app: scality-ui
+spec:
+  selector:
+    app: scality-ui
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
