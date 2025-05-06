@@ -125,7 +125,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "shell-ui-volume",
-									MountPath: "/usr/share/nginx/html/shell/config.json",
+									MountPath: "/usr/share/nginx/html/shell",
 								},
 							},
 						},
