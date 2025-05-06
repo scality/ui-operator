@@ -119,7 +119,16 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
-						{Name: "shell-ui", Image: scalityui.Spec.ShellUIimage},
+						{
+							Name:  "shell-ui",
+							Image: scalityui.Spec.ShellUIimage,
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "shell-ui-volume",
+									MountPath: "/usr/share/nginx/html/shell/config.json",
+								},
+							},
+						},
 					},
 					Volumes: []corev1.Volume{
 						{
