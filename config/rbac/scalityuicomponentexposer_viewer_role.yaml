@@ -1,35 +1,23 @@
----
+# permissions for end users to view scalityuicomponentexposers.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: manager-role
+  labels:
+    app.kubernetes.io/name: ui-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: scalityuicomponentexposer-viewer-role
 rules:
 - apiGroups:
   - ui.scality.com
   resources:
   - scalityuicomponentexposers
-  - scalityuis
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - ui.scality.com
   resources:
-  - scalityuicomponentexposers/finalizers
-  - scalityuis/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - ui.scality.com
-  resources:
   - scalityuicomponentexposers/status
-  - scalityuis/status
   verbs:
   - get
-  - patch
-  - update
