@@ -2,4 +2,5 @@
 resources:
 - ui_v1alpha1_scalityui.yaml
 - ui_v1alpha1_scalityuicomponent.yaml
+- ui_v1alpha1_scalityuicomponentexposer.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
