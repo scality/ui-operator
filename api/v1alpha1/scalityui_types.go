@@ -28,9 +28,69 @@ type ScalityUISpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	Image       string `json:"image"`
-	ProductName string `json:"productName"`
-	MountPath   string `json:"mountPath,omitempty"`
+	Image                 string `json:"image"`
+	ProductName           string `json:"productName"`
+	MountPath             string `json:"mountPath,omitempty"`
+	CanChangeTheme        bool   `json:"canChangeTheme,omitempty"`
+	CanChangeInstanceName bool   `json:"canChangeInstanceName,omitempty"`
+	CanChangeLanguage     bool   `json:"canChangeLanguage,omitempty"`
+	Favicon               string `json:"favicon,omitempty"`
+	Logo                  string `json:"logo,omitempty"`
+	Themes                Themes `json:"themes,omitempty"`
+}
+
+// Themes defines the various themes supported by the UI.
+type Themes struct {
+	Light Theme `json:"light"`
+	Dark  Theme `json:"dark"`
+}
+
+// Theme defines the configuration of an individual theme.
+type Theme struct {
+	Type     string `json:"type"`
+	Name     string `json:"name"`
+	LogoPath string `json:"logoPath"`
+}
+
+// Navbar configures the UI navbar.
+type Navbar struct {
+	Main     []NavbarItem `json:"main"`
+	SubLogin []NavbarItem `json:"subLogin"`
+}
+
+// NavbarItem defines an item in the navbar.
+type NavbarItem struct {
+	Kind       string            `json:"kind"`
+	View       string            `json:"view"`
+	Groups     []string          `json:"groups,omitempty"`
+	Icon       string            `json:"icon,omitempty"`
+	IsExternal bool              `json:"isExternal,omitempty"`
+	Label      map[string]string `json:"label,omitempty"`
+	URL        string            `json:"url,omitempty"`
+}
+
+// Networks configures network parameters for the UI.
+type Networks struct {
+	IngressClassName   string            `json:"ingressClassName"`
+	Host               string            `json:"host"`
+	TLS                []IngressTLS      `json:"tls,omitempty"`
+	IngressAnnotations map[string]string `json:"ingressAnnotations,omitempty"`
+}
+
+// IngressTLS defines the TLS configuration for the ingress.
+type IngressTLS struct {
+	Hosts      []string `json:"hosts,omitempty"`
+	SecretName string   `json:"secretName,omitempty"`
+}
+
+// AuthConfig defines the authentication configuration.
+type AuthConfig struct {
+	Kind           string `json:"kind"`
+	ProviderUrl    string `json:"providerUrl"`
+	RedirectUrl    string `json:"redirectUrl"`
+	ClientId       string `json:"clientId"`
+	Scopes         string `json:"scopes"`
+	ProviderLogout bool   `json:"providerLogout,omitempty"`
 }
 
 // ScalityUIStatus defines the observed state of ScalityUI
