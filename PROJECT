@@ -29,4 +29,13 @@ resources:
   kind: ScalityUIComponent
   path: github.com/scality/ui-operator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: scality.com
+  group: ui
+  kind: ScalityUIComponentExposer
+  path: github.com/scality/ui-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

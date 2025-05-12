@@ -22,6 +22,8 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the Project itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- scalityuicomponentexposer_editor_role.yaml
+- scalityuicomponentexposer_viewer_role.yaml
 - scalityuicomponent_editor_role.yaml
 - scalityuicomponent_viewer_role.yaml
 - scalityui_editor_role.yaml
