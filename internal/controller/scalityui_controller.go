@@ -46,7 +46,8 @@ func createConfigJSON(scalityui *uiscalitycomv1alpha1.ScalityUI) ([]byte, error)
 func (r *ScalityUIReconciler) createOrUpdateConfigMap(ctx context.Context, configMap *corev1.ConfigMap, configJSON []byte) (controllerutil.OperationResult, error) {
 	return controllerutil.CreateOrUpdate(ctx, r.Client, configMap, func() error {
 		configMap.Data = map[string]string{
-			"config.json": string(configJSON),
+			"config.json":           string(configJSON),
+			"deployed-ui-apps.json": `[]`,
 		}
 		return nil
 	})
@@ -217,5 +218,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *ScalityUIReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uiscalitycomv1alpha1.ScalityUI{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&appsv1.Deployment{}).
 		Complete(r)
 }

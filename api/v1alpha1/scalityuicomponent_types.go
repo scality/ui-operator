@@ -34,6 +34,10 @@ type ScalityUIComponentSpec struct {
 type ScalityUIComponentStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	Path    string `json:"path,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Version string `json:"version,omitempty"`
+	Name    string `json:"name,omitempty"`
 }
 
 // +kubebuilder:object:root=true
