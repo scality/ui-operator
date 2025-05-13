@@ -32,8 +32,14 @@ type ScalityUIComponentSpec struct {
 
 // ScalityUIComponentStatus defines the observed state of ScalityUIComponent
 type ScalityUIComponentStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Path represents the URL path to the UI component
+	PublicPath string `json:"publicPath,omitempty"`
+	// Kind represents the type of UI component
+	Kind string `json:"kind,omitempty"`
+	// Version represents the version of the UI component
+	Version string `json:"version,omitempty"`
+	// Conditions represent the latest available observations of a UI component's state
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
