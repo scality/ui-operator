@@ -18,11 +18,17 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -30,9 +36,30 @@ import (
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 )
 
+// MicroAppConfig represents the structure of the micro-app-configuration file
+type MicroAppConfig struct {
+	Kind       string     `json:"kind"`
+	ApiVersion string     `json:"apiVersion"`
+	Metadata   ConfigMeta `json:"metadata"`
+	Spec       ConfigSpec `json:"spec"`
+}
+
+// ConfigMeta represents the metadata section of the micro-app-configuration
+type ConfigMeta struct {
+	Kind string `json:"kind"`
+}
+
+// ConfigSpec represents the spec section of the micro-app-configuration
+type ConfigSpec struct {
+	RemoteEntryPath string `json:"remoteEntryPath"`
+	PublicPath      string `json:"publicPath"`
+	Version         string `json:"version"`
+}
+
 type ScalityUIComponentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Config *rest.Config
 }
 
 func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -116,11 +143,120 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	logger.Info("Service reconciled", "result", serviceResult)
 
+	if err := r.Get(ctx, client.ObjectKey{Name: deployment.Name, Namespace: deployment.Namespace}, deployment); err != nil {
+		logger.Error(err, "Failed to get deployment status")
+		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+	}
+
+	if deployment.Status.ReadyReplicas > 0 {
+		configContent, err := r.fetchMicroAppConfig(ctx, scalityUIComponent.Namespace, scalityUIComponent.Name)
+
+		if err != nil {
+			logger.Error(err, "Failed to fetch micro-app-configuration")
+
+			// Add a failure condition
+			meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
+				Type:               "ConfigurationRetrieved",
+				Status:             metav1.ConditionFalse,
+				Reason:             "FetchFailed",
+				Message:            fmt.Sprintf("Failed to fetch configuration: %v", err),
+				LastTransitionTime: metav1.Now(),
+			})
+
+			if updateErr := r.Status().Update(ctx, scalityUIComponent); updateErr != nil {
+				logger.Error(updateErr, "Failed to update status with failure condition")
+			}
+
+			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+		}
+
+		// Parse JSON to extract information
+		var config MicroAppConfig
+		if err := json.Unmarshal([]byte(configContent), &config); err != nil {
+			logger.Error(err, "Failed to parse micro-app-configuration")
+
+			// Add a failure condition
+			meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
+				Type:               "ConfigurationRetrieved",
+				Status:             metav1.ConditionFalse,
+				Reason:             "ParseFailed",
+				Message:            fmt.Sprintf("Failed to parse configuration: %v", err),
+				LastTransitionTime: metav1.Now(),
+			})
+
+			if updateErr := r.Status().Update(ctx, scalityUIComponent); updateErr != nil {
+				logger.Error(updateErr, "Failed to update status with failure condition")
+			}
+
+			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+		}
+
+		// Update status with retrieved information
+		scalityUIComponent.Status.Kind = config.Metadata.Kind
+		scalityUIComponent.Status.PublicPath = config.Spec.PublicPath
+		scalityUIComponent.Status.Version = config.Spec.Version
+
+		logger.Info("Debug config values",
+			"metadata.kind", config.Metadata.Kind,
+			"spec.publicPath", config.Spec.PublicPath,
+			"spec.version", config.Spec.Version)
+
+		// Add a success condition
+		meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
+			Type:               "ConfigurationRetrieved",
+			Status:             metav1.ConditionTrue,
+			Reason:             "FetchSucceeded",
+			Message:            "Successfully fetched and applied UI component configuration",
+			LastTransitionTime: metav1.Now(),
+		})
+
+		// Update the status
+		if err := r.Status().Update(ctx, scalityUIComponent); err != nil {
+			logger.Error(err, "Failed to update status with configuration")
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("ScalityUIComponent status updated with configuration",
+			"kind", scalityUIComponent.Status.Kind,
+			"publicPath", scalityUIComponent.Status.PublicPath,
+			"version", scalityUIComponent.Status.Version)
+	} else {
+		logger.Info("Deployment not ready yet, waiting for pods to start")
+		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+	}
+
 	return ctrl.Result{}, nil
+}
+
+func (r *ScalityUIComponentReconciler) fetchMicroAppConfig(ctx context.Context, namespace, serviceName string) (string, error) {
+	clientset, err := kubernetes.NewForConfig(r.Config)
+	if err != nil {
+		return "", fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	restClient := clientset.CoreV1().RESTClient()
+	req := restClient.Get().
+		Namespace(namespace).
+		Resource("services").
+		Name(fmt.Sprintf("%s:80", serviceName)).
+		SubResource("proxy").
+		Suffix("/.well-known/micro-app-configuration")
+
+	// Execute the request
+	result := req.Do(ctx)
+	raw, err := result.Raw()
+	if err != nil {
+		return "", fmt.Errorf("failed to get configuration: %w", err)
+	}
+
+	return string(raw), nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ScalityUIComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Store the configuration for later use
+	r.Config = mgr.GetConfig()
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uiv1alpha1.ScalityUIComponent{}).
 		Owns(&appsv1.Deployment{}).
