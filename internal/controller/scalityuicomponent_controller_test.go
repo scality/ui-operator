@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
@@ -33,12 +34,14 @@ import (
 var _ = Describe("ScalityUIComponent Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
+		const testNamespace = "default"
+		const testImage = "scality/ui-component:latest"
 
 		ctx := context.Background()
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: testNamespace,
 		}
 		scalityuicomponent := &uiv1alpha1.ScalityUIComponent{}
 
@@ -49,16 +52,17 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 				resource := &uiv1alpha1.ScalityUIComponent{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: testNamespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: uiv1alpha1.ScalityUIComponentSpec{
+						Image: testImage,
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
 			resource := &uiv1alpha1.ScalityUIComponent{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
@@ -66,6 +70,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			By("Cleanup the specific resource instance ScalityUIComponent")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
+
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &ScalityUIComponentReconciler{
@@ -77,8 +82,18 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			By("Checking if Deployment was created with correct specifications")
+			deployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, typeNamespacedName, deployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
+			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal(testImage))
+			Expect(deployment.Spec.Template.Spec.Containers[0].Name).To(Equal(resourceName))
+
+			Expect(deployment.Spec.Template.ObjectMeta.Labels["app"]).To(Equal(resourceName))
+			Expect(deployment.Spec.Selector.MatchLabels["app"]).To(Equal(resourceName))
 		})
 	})
 })
