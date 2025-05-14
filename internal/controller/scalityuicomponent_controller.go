@@ -85,6 +85,37 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	logger.Info("Deployment reconciled", "result", deploymentResult)
 
+	// Service
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      scalityUIComponent.Name,
+			Namespace: scalityUIComponent.Namespace,
+		},
+	}
+
+	serviceResult, err := ctrl.CreateOrUpdate(ctx, r.Client, service, func() error {
+		service.Spec = corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": scalityUIComponent.Name,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:     "http",
+					Protocol: corev1.ProtocolTCP,
+					Port:     80,
+				},
+			},
+		}
+		return nil
+	})
+
+	if err != nil {
+		logger.Error(err, "Failed to create or update Service")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Service reconciled", "result", serviceResult)
+
 	return ctrl.Result{}, nil
 }
 
@@ -93,5 +124,6 @@ func (r *ScalityUIComponentReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uiv1alpha1.ScalityUIComponent{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
 		Complete(r)
 }
