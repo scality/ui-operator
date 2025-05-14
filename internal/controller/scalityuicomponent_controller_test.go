@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
@@ -94,6 +95,17 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			Expect(deployment.Spec.Template.ObjectMeta.Labels["app"]).To(Equal(resourceName))
 			Expect(deployment.Spec.Selector.MatchLabels["app"]).To(Equal(resourceName))
+
+			By("Checking if Service was created with correct specifications")
+			service := &corev1.Service{}
+			err = k8sClient.Get(ctx, typeNamespacedName, service)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(service.Spec.Selector["app"]).To(Equal(resourceName))
+			Expect(service.Spec.Ports).To(HaveLen(1))
+			Expect(service.Spec.Ports[0].Name).To(Equal("http"))
+			Expect(service.Spec.Ports[0].Protocol).To(Equal(corev1.ProtocolTCP))
+			Expect(service.Spec.Ports[0].Port).To(Equal(int32(80)))
 		})
 	})
 })
