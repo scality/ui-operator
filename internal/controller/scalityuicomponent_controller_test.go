@@ -18,11 +18,16 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -31,6 +36,37 @@ import (
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 )
+
+// createMockConfigFunc returns a mock function for fetchConfigFunc
+func createMockConfigFunc(mockResponse string, mockError error) FetchConfigFunc {
+	return func(ctx context.Context, namespace, serviceName string) (string, error) {
+		if mockError != nil {
+			return "", mockError
+		}
+		return mockResponse, nil
+	}
+}
+
+// MockClient overrides some client methods for testing
+type MockClient struct {
+	client.Client
+	getDeploymentWithReadyReplicas bool
+}
+
+// Get overrides the Get method to simulate a deployment with ready pods
+func (m *MockClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	err := m.Client.Get(ctx, key, obj)
+
+	// If the client is configured to return a deployment with ReadyReplicas
+	// and the requested object is a deployment
+	if m.getDeploymentWithReadyReplicas {
+		if deployment, ok := obj.(*appsv1.Deployment); ok {
+			deployment.Status.ReadyReplicas = 1
+		}
+	}
+
+	return err
+}
 
 var _ = Describe("ScalityUIComponent Controller", func() {
 	Context("When reconciling a resource", func() {
@@ -70,6 +106,19 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			By("Cleanup the specific resource instance ScalityUIComponent")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			// Also delete Deployment and Service
+			deployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, typeNamespacedName, deployment)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			}
+
+			service := &corev1.Service{}
+			err = k8sClient.Get(ctx, typeNamespacedName, service)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, service)).To(Succeed())
+			}
 		})
 
 		It("should successfully reconcile the resource", func() {
@@ -106,6 +155,234 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(service.Spec.Ports[0].Name).To(Equal("http"))
 			Expect(service.Spec.Ports[0].Protocol).To(Equal(corev1.ProtocolTCP))
 			Expect(service.Spec.Ports[0].Port).To(Equal(int32(80)))
+		})
+
+		It("should update status with component configuration when deployment is ready", func() {
+			By("Creating a reconciler with a mock fetch config function")
+			mockConfigResponse := `{
+				"kind": "micro-app",
+				"apiVersion": "v1",
+				"metadata": {
+					"kind": "AdminUI"
+				},
+				"spec": {
+					"remoteEntryPath": "/remoteEntry.js",
+					"publicPath": "/admin",
+					"version": "1.0.0"
+				}
+			}`
+
+			// Create a mocked client that returns deployments with ReadyReplicas=1
+			mockClient := &MockClient{
+				Client:                         k8sClient,
+				getDeploymentWithReadyReplicas: true,
+			}
+
+			reconciler := &ScalityUIComponentReconciler{
+				Client:          mockClient,
+				Scheme:          k8sClient.Scheme(),
+				fetchConfigFunc: createMockConfigFunc(mockConfigResponse, nil),
+			}
+
+			// Create the base deployment
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": resourceName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": resourceName,
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  resourceName,
+									Image: testImage,
+								},
+							},
+						},
+					},
+				},
+			}
+
+			// Create the deployment without status - the mock will handle injecting ReadyReplicas=1
+			_, err := ctrl.CreateOrUpdate(ctx, k8sClient, deployment, func() error {
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Run the reconciliation
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify the status was updated
+			updatedComponent := &uiv1alpha1.ScalityUIComponent{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, typeNamespacedName, updatedComponent)
+				if err != nil {
+					return false
+				}
+				return updatedComponent.Status.Kind == "AdminUI" &&
+					updatedComponent.Status.PublicPath == "/admin" &&
+					updatedComponent.Status.Version == "1.0.0"
+			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+
+			// Verify the status condition
+			condition := meta.FindStatusCondition(updatedComponent.Status.Conditions, "ConfigurationRetrieved")
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(condition.Reason).To(Equal("FetchSucceeded"))
+		})
+
+		It("should set failure condition when cannot fetch configuration", func() {
+			By("Creating a reconciler with a mock fetch config function that fails")
+			// Create a mocked client that returns deployments with ReadyReplicas=1
+			mockClient := &MockClient{
+				Client:                         k8sClient,
+				getDeploymentWithReadyReplicas: true,
+			}
+
+			reconciler := &ScalityUIComponentReconciler{
+				Client:          mockClient,
+				Scheme:          k8sClient.Scheme(),
+				fetchConfigFunc: createMockConfigFunc("", fmt.Errorf("failed to connect to service")),
+			}
+
+			// Create the base deployment
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": resourceName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": resourceName,
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  resourceName,
+									Image: testImage,
+								},
+							},
+						},
+					},
+				},
+			}
+
+			// Create the deployment without status - the mock will handle injecting ReadyReplicas=1
+			_, err := ctrl.CreateOrUpdate(ctx, k8sClient, deployment, func() error {
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Run the reconciliation
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			// Should succeed but with a requeue
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Second * 10))
+
+			// Verify the failure condition
+			updatedComponent := &uiv1alpha1.ScalityUIComponent{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, typeNamespacedName, updatedComponent)
+				if err != nil {
+					return false
+				}
+				condition := meta.FindStatusCondition(updatedComponent.Status.Conditions, "ConfigurationRetrieved")
+				return condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "FetchFailed"
+			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+		})
+
+		It("should set failure condition when configuration JSON is invalid", func() {
+			By("Creating a reconciler with a mock fetch config function that returns invalid JSON")
+			// Create a mocked client that returns deployments with ReadyReplicas=1
+			mockClient := &MockClient{
+				Client:                         k8sClient,
+				getDeploymentWithReadyReplicas: true,
+			}
+
+			reconciler := &ScalityUIComponentReconciler{
+				Client:          mockClient,
+				Scheme:          k8sClient.Scheme(),
+				fetchConfigFunc: createMockConfigFunc(`{"invalid": "json`, nil),
+			}
+
+			// Create the base deployment
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": resourceName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": resourceName,
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  resourceName,
+									Image: testImage,
+								},
+							},
+						},
+					},
+				},
+			}
+
+			// Create the deployment without status - the mock will handle injecting ReadyReplicas=1
+			_, err := ctrl.CreateOrUpdate(ctx, k8sClient, deployment, func() error {
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Run the reconciliation
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			// Should succeed but with a requeue
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Second * 10))
+
+			// Verify the parsing failure condition
+			updatedComponent := &uiv1alpha1.ScalityUIComponent{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, typeNamespacedName, updatedComponent)
+				if err != nil {
+					return false
+				}
+				condition := meta.FindStatusCondition(updatedComponent.Status.Conditions, "ConfigurationRetrieved")
+				return condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "ParseFailed"
+			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
 		})
 	})
 })

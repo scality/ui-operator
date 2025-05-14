@@ -56,10 +56,14 @@ type ConfigSpec struct {
 	Version         string `json:"version"`
 }
 
+// FetchConfigFunc is a function type for configuration retrieval
+type FetchConfigFunc func(ctx context.Context, namespace, serviceName string) (string, error)
+
 type ScalityUIComponentReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Config *rest.Config
+	Scheme          *runtime.Scheme
+	Config          *rest.Config
+	fetchConfigFunc FetchConfigFunc
 }
 
 func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -149,7 +153,13 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	if deployment.Status.ReadyReplicas > 0 {
-		configContent, err := r.fetchMicroAppConfig(ctx, scalityUIComponent.Namespace, scalityUIComponent.Name)
+		// Use the injected function to retrieve configuration or the default function
+		fetchConfig := r.fetchConfigFunc
+		if fetchConfig == nil {
+			fetchConfig = r.fetchMicroAppConfig
+		}
+
+		configContent, err := fetchConfig(ctx, scalityUIComponent.Namespace, scalityUIComponent.Name)
 
 		if err != nil {
 			logger.Error(err, "Failed to fetch micro-app-configuration")
