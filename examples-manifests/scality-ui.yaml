@@ -6,5 +6,4 @@ metadata:
   namespace: ui
 spec:
   image: ghcr.io/scality/metalk8s/shell-ui:v130.0.0-dev-130.0.0-alpha.2-77-gce11d6eff
-  mountPath: /usr/share/nginx/html/shell
   productName: RING
