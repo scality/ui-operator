@@ -24,6 +24,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -59,11 +60,16 @@ type ConfigSpec struct {
 // FetchConfigFunc is a function type for configuration retrieval
 type FetchConfigFunc func(ctx context.Context, namespace, serviceName string) (string, error)
 
+// ExposerCreatorFunc is a function type for creating or updating exposers
+type ExposerCreatorFunc func(ctx context.Context, component *uiv1alpha1.ScalityUIComponent) error
+
 type ScalityUIComponentReconciler struct {
 	client.Client
 	Scheme          *runtime.Scheme
 	Config          *rest.Config
 	fetchConfigFunc FetchConfigFunc
+	// Allow injection of a custom exposer creator function for testing
+	createOrUpdateExposerFunc ExposerCreatorFunc
 }
 
 func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -230,6 +236,21 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 			"kind", scalityUIComponent.Status.Kind,
 			"publicPath", scalityUIComponent.Status.PublicPath,
 			"version", scalityUIComponent.Status.Version)
+
+		// Create or update a ScalityUIComponentExposer for this component
+		if r.createOrUpdateExposerFunc != nil {
+			// Use injected function if provided (for testing)
+			if err := r.createOrUpdateExposerFunc(ctx, scalityUIComponent); err != nil {
+				logger.Error(err, "Failed to create or update ScalityUIComponentExposer")
+				return ctrl.Result{}, err
+			}
+		} else {
+			// Use default implementation
+			if err := r.createOrUpdateExposer(ctx, scalityUIComponent); err != nil {
+				logger.Error(err, "Failed to create or update ScalityUIComponentExposer")
+				return ctrl.Result{}, err
+			}
+		}
 	} else {
 		logger.Info("Deployment not ready yet, waiting for pods to start")
 		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
@@ -260,6 +281,111 @@ func (r *ScalityUIComponentReconciler) fetchMicroAppConfig(ctx context.Context, 
 	}
 
 	return string(raw), nil
+}
+
+func (r *ScalityUIComponentReconciler) createOrUpdateExposer(ctx context.Context, component *uiv1alpha1.ScalityUIComponent) error {
+	logger := log.FromContext(ctx)
+
+	// Find an available ScalityUI in the same namespace
+	// TODO could be enhanced to select based on labels or annotations
+	scalityUIList := &uiv1alpha1.ScalityUIList{}
+	if err := r.List(ctx, scalityUIList, client.InNamespace(component.Namespace)); err != nil {
+		return fmt.Errorf("failed to list ScalityUI resources: %w", err)
+	}
+
+	if len(scalityUIList.Items) == 0 {
+		return fmt.Errorf("no ScalityUI found in namespace %s to expose component", component.Namespace)
+	}
+
+	// Get the first ScalityUI
+	scalityUI := scalityUIList.Items[0]
+
+	// Create exposer name based on component name
+	exposerName := component.Name + "-exposer"
+
+	// Check if exposer already exists
+	exposer := &uiv1alpha1.ScalityUIComponentExposer{}
+	err := r.Get(ctx, client.ObjectKey{Name: exposerName, Namespace: component.Namespace}, exposer)
+
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check for existing ScalityUIComponentExposer: %w", err)
+	}
+
+	// If exposer doesn't exist, create a new one
+	if errors.IsNotFound(err) {
+		logger.Info("Creating new ScalityUIComponentExposer", "name", exposerName)
+
+		// Ensure we have valid APIVersion and Kind
+		apiVersion := "ui.scality.com/v1alpha1"
+		if component.APIVersion != "" {
+			apiVersion = component.APIVersion
+		}
+
+		kind := "ScalityUIComponent"
+		if component.Kind != "" {
+			kind = component.Kind
+		}
+
+		exposer = &uiv1alpha1.ScalityUIComponentExposer{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      exposerName,
+				Namespace: component.Namespace,
+				// Add owner reference to the component
+				OwnerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: apiVersion,
+						Kind:       kind,
+						Name:       component.Name,
+						UID:        component.UID,
+						Controller: pointer(true),
+					},
+				},
+			},
+			Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+				ScalityUI:          scalityUI.Name,
+				ScalityUIComponent: component.Name,
+			},
+		}
+
+		if err = r.Create(ctx, exposer); err != nil {
+			return fmt.Errorf("failed to create ScalityUIComponentExposer: %w", err)
+		}
+
+		logger.Info("Successfully created ScalityUIComponentExposer",
+			"name", exposerName,
+			"component", component.Name,
+			"ui", scalityUI.Name)
+	} else {
+		// Exposer exists, update if necessary
+		logger.Info("ScalityUIComponentExposer already exists", "name", exposerName)
+
+		// Update fields if needed
+		updated := false
+
+		if exposer.Spec.ScalityUI != scalityUI.Name {
+			exposer.Spec.ScalityUI = scalityUI.Name
+			updated = true
+		}
+
+		if exposer.Spec.ScalityUIComponent != component.Name {
+			exposer.Spec.ScalityUIComponent = component.Name
+			updated = true
+		}
+
+		if updated {
+			if err = r.Update(ctx, exposer); err != nil {
+				return fmt.Errorf("failed to update ScalityUIComponentExposer: %w", err)
+			}
+			logger.Info("Successfully updated ScalityUIComponentExposer", "name", exposerName)
+		}
+	}
+
+	return nil
+}
+
+// helper function to create a pointer to a boolean
+func pointer(b bool) *bool {
+	return &b
 }
 
 // SetupWithManager sets up the controller with the Manager.
