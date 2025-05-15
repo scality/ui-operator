@@ -255,6 +255,8 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		logger.Info("Deployment not ready yet, waiting for pods to start")
 		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 	}
+  
+
 
 	return ctrl.Result{}, nil
 }
@@ -389,6 +391,9 @@ func pointer(b bool) *bool {
 }
 
 // SetupWithManager sets up the controller with the Manager.
+// +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuicomponents,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuicomponents/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuicomponents/finalizers,verbs=update
 func (r *ScalityUIComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Store the configuration for later use
 	r.Config = mgr.GetConfig()

@@ -56,7 +56,7 @@ func (r *ScalityUIReconciler) createOrUpdateConfigMap(ctx context.Context, confi
 func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, deploy *appsv1.Deployment, scalityui *uiscalitycomv1alpha1.ScalityUI) (controllerutil.OperationResult, error) {
 	return controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 
-		mountPath := "/usr/share/nginx/html/shell"
+		mountPath := "/usr/share/nginx/html/shell/config"
 		if scalityui.Spec.MountPath != "" {
 			mountPath = scalityui.Spec.MountPath
 		}
