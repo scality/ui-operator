@@ -149,8 +149,8 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &ScalityUIComponentReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:                    k8sClient,
+				Scheme:                    k8sClient.Scheme(),
 				createOrUpdateExposerFunc: DisabledExposerCreatorFunc,
 			}
 
@@ -205,9 +205,9 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			}
 
 			reconciler := &ScalityUIComponentReconciler{
-				Client:          mockClient,
-				Scheme:          k8sClient.Scheme(),
-				fetchConfigFunc: createMockConfigFunc(mockConfigResponse, nil),
+				Client:                    mockClient,
+				Scheme:                    k8sClient.Scheme(),
+				fetchConfigFunc:           createMockConfigFunc(mockConfigResponse, nil),
 				createOrUpdateExposerFunc: DisabledExposerCreatorFunc,
 			}
 
@@ -281,9 +281,9 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			}
 
 			reconciler := &ScalityUIComponentReconciler{
-				Client:          mockClient,
-				Scheme:          k8sClient.Scheme(),
-				fetchConfigFunc: createMockConfigFunc("", fmt.Errorf("failed to connect to service")),
+				Client:                    mockClient,
+				Scheme:                    k8sClient.Scheme(),
+				fetchConfigFunc:           createMockConfigFunc("", fmt.Errorf("failed to connect to service")),
 				createOrUpdateExposerFunc: DisabledExposerCreatorFunc,
 			}
 
@@ -352,9 +352,9 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			}
 
 			reconciler := &ScalityUIComponentReconciler{
-				Client:          mockClient,
-				Scheme:          k8sClient.Scheme(),
-				fetchConfigFunc: createMockConfigFunc(`{"invalid": "json`, nil),
+				Client:                    mockClient,
+				Scheme:                    k8sClient.Scheme(),
+				fetchConfigFunc:           createMockConfigFunc(`{"invalid": "json`, nil),
 				createOrUpdateExposerFunc: DisabledExposerCreatorFunc,
 			}
 

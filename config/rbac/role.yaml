@@ -7,7 +7,6 @@ rules:
 - apiGroups:
   - ui.scality.com
   resources:
-  - scalityuicomponentexposers
   - scalityuis
   verbs:
   - create
@@ -20,14 +19,12 @@ rules:
 - apiGroups:
   - ui.scality.com
   resources:
-  - scalityuicomponentexposers/finalizers
   - scalityuis/finalizers
   verbs:
   - update
 - apiGroups:
   - ui.scality.com
   resources:
-  - scalityuicomponentexposers/status
   - scalityuis/status
   verbs:
   - get
