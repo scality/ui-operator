@@ -18,12 +18,16 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -53,29 +57,43 @@ func (r *ScalityUIReconciler) createOrUpdateConfigMap(ctx context.Context, confi
 }
 
 // createOrUpdateDeployment creates or updates a Deployment with the given configuration
-func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, deploy *appsv1.Deployment, scalityui *uiscalitycomv1alpha1.ScalityUI) (controllerutil.OperationResult, error) {
+func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, deploy *appsv1.Deployment, scalityui *uiscalitycomv1alpha1.ScalityUI, configHash string) (controllerutil.OperationResult, error) {
 	return controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 
-		mountPath := "/usr/share/nginx/html/shell/config"
+		mountPath := "/usr/share/nginx/html/shell"
 		if scalityui.Spec.MountPath != "" {
 			mountPath = scalityui.Spec.MountPath
 		}
 
+		zero := intstr.FromInt(0)
+		one := intstr.FromInt(1)
+
 		deploy.Spec = appsv1.DeploymentSpec{
 			Replicas: &[]int32{1}[0],
+			Strategy: appsv1.DeploymentStrategy{
+				Type: appsv1.RollingUpdateDeploymentStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDeployment{
+					MaxUnavailable: &zero,
+					MaxSurge:       &one,
+				},
+			},
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"app": scalityui.Name},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"app": scalityui.Name},
+					Annotations: map[string]string{
+						"checksum/config": configHash,
+					},
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{Name: scalityui.Name, Image: scalityui.Spec.Image, VolumeMounts: []corev1.VolumeMount{
 							{
 								Name:      scalityui.Name + "-volume",
-								MountPath: mountPath,
+								MountPath: filepath.Join(mountPath, "config.json"),
+								SubPath:   "config.json",
 							},
 						}},
 					},
@@ -141,6 +159,11 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
+	// Calculate hash of configJSON
+	h := sha256.New()
+	h.Write(configJSON)
+	configHash := fmt.Sprintf("%x", h.Sum(nil))
+
 	// Define ConfigMap
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -185,7 +208,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Create or update Deployment
-	deploymentResult, err := r.createOrUpdateDeployment(ctx, deploy, scalityui)
+	deploymentResult, err := r.createOrUpdateDeployment(ctx, deploy, scalityui, configHash)
 	if err != nil {
 		r.Log.Error(err, "Failed to create or update deployment")
 		return ctrl.Result{}, err
