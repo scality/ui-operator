@@ -8,6 +8,7 @@ rules:
   - ui.scality.com
   resources:
   - scalityuicomponentexposers
+  - scalityuicomponents
   - scalityuis
   verbs:
   - create
@@ -21,6 +22,7 @@ rules:
   - ui.scality.com
   resources:
   - scalityuicomponentexposers/finalizers
+  - scalityuicomponents/finalizers
   - scalityuis/finalizers
   verbs:
   - update
@@ -28,6 +30,7 @@ rules:
   - ui.scality.com
   resources:
   - scalityuicomponentexposers/status
+  - scalityuicomponents/status
   - scalityuis/status
   verbs:
   - get
