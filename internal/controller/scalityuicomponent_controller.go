@@ -36,6 +36,9 @@ import (
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 )
 
+// DefaultServicePort is the default port used to connect to the UI component service
+const DefaultServicePort = 80
+
 // MicroAppConfig represents the structure of the micro-app-configuration file
 type MicroAppConfig struct {
 	Kind       string     `json:"kind"`
@@ -147,6 +150,8 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	logger.Info("Service reconciled", "result", serviceResult)
 
+	// Re-fetch the Deployment to get its latest status, particularly ReadyReplicas
+	// This is crucial for determining if pods are ready before attempting to fetch the UI configuration
 	if err := r.Get(ctx, client.ObjectKey{Name: deployment.Name, Namespace: deployment.Namespace}, deployment); err != nil {
 		logger.Error(err, "Failed to get deployment status")
 		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
@@ -241,7 +246,7 @@ func (r *ScalityUIComponentReconciler) fetchMicroAppConfig(ctx context.Context, 
 	req := restClient.Get().
 		Namespace(namespace).
 		Resource("services").
-		Name(serviceName + ":80").
+		Name(fmt.Sprintf("%s:%d", serviceName, DefaultServicePort)).
 		SubResource("proxy").
 		Suffix("/.well-known/micro-app-configuration")
 
