@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -150,7 +151,19 @@ var _ = Describe("ScalityUI Controller", func() {
 			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
 			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal(imageName))
 			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(HaveLen(1))
-			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath).To(Equal(mountPath))
+			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath).To(Equal(mountPath + "/config.json"))
+
+			// Verify Deployment Strategy
+			Expect(deployment.Spec.Strategy.Type).To(Equal(appsv1.RollingUpdateDeploymentStrategyType))
+			Expect(deployment.Spec.Strategy.RollingUpdate).NotTo(BeNil())
+			Expect(deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.Type).To(Equal(intstr.Int))
+			Expect(deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.IntVal).To(Equal(int32(0)))
+			Expect(deployment.Spec.Strategy.RollingUpdate.MaxSurge.Type).To(Equal(intstr.Int))
+			Expect(deployment.Spec.Strategy.RollingUpdate.MaxSurge.IntVal).To(Equal(int32(1)))
+
+			// Verify Pod Template Annotations
+			Expect(deployment.Spec.Template.ObjectMeta.Annotations).NotTo(BeNil())
+			Expect(deployment.Spec.Template.ObjectMeta.Annotations).To(HaveKey("checksum/config"))
 		})
 
 		It("should update ConfigMap when the resource is updated", func() {
@@ -220,7 +233,19 @@ var _ = Describe("ScalityUI Controller", func() {
 			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
 			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal(newImage))
 			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(HaveLen(1))
-			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath).To(Equal(mountPath))
+			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath).To(Equal(mountPath + "/config.json"))
+
+			// Verify Deployment Strategy after update
+			Expect(deployment.Spec.Strategy.Type).To(Equal(appsv1.RollingUpdateDeploymentStrategyType))
+			Expect(deployment.Spec.Strategy.RollingUpdate).NotTo(BeNil())
+			Expect(deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.Type).To(Equal(intstr.Int))
+			Expect(deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.IntVal).To(Equal(int32(0)))
+			Expect(deployment.Spec.Strategy.RollingUpdate.MaxSurge.Type).To(Equal(intstr.Int))
+			Expect(deployment.Spec.Strategy.RollingUpdate.MaxSurge.IntVal).To(Equal(int32(1)))
+
+			// Verify Pod Template Annotations after update
+			Expect(deployment.Spec.Template.ObjectMeta.Annotations).NotTo(BeNil())
+			Expect(deployment.Spec.Template.ObjectMeta.Annotations).To(HaveKey("checksum/config"))
 		})
 
 		It("should test createConfigJSON function directly", func() {
