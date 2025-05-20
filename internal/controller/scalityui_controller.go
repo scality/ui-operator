@@ -44,11 +44,92 @@ const (
 
 // createConfigJSON creates a JSON config from the ScalityUI object
 func createConfigJSON(scalityui *uiscalitycomv1alpha1.ScalityUI) ([]byte, error) {
-	configJSON := map[string]string{
-		"productName": scalityui.Spec.ProductName,
+	// Default themes
+	defaultDarkTheme := uiscalitycomv1alpha1.Theme{
+		Type:     "core-ui",
+		Name:     "darkRebrand",
+		LogoPath: "/artesca/navbar/artesca-logo-dark.svg",
+	}
+	defaultLightTheme := uiscalitycomv1alpha1.Theme{
+		Type:     "core-ui",
+		Name:     "artescaLight",
+		LogoPath: "/artesca/navbar/artesca-logo-light.svg",
 	}
 
-	return json.Marshal(configJSON)
+	var effectiveDarkTheme, effectiveLightTheme uiscalitycomv1alpha1.Theme
+
+	// Check if the user has provided any specific theme settings
+	userSpecThemes := scalityui.Spec.Themes
+	isLightUserProvided := userSpecThemes.Light.Type != "" || userSpecThemes.Light.Name != "" || userSpecThemes.Light.LogoPath != ""
+	isDarkUserProvided := userSpecThemes.Dark.Type != "" || userSpecThemes.Dark.Name != "" || userSpecThemes.Dark.LogoPath != ""
+
+	if !isLightUserProvided && !isDarkUserProvided {
+		// No user-defined themes at all, use full defaults
+		effectiveLightTheme = defaultLightTheme
+		effectiveDarkTheme = defaultDarkTheme
+	} else {
+		// User has provided some theme configuration for light or dark or both
+		if isLightUserProvided {
+			effectiveLightTheme = userSpecThemes.Light
+			if effectiveLightTheme.Type == "" {
+				effectiveLightTheme.Type = defaultLightTheme.Type
+			}
+			if effectiveLightTheme.Name == "" {
+				effectiveLightTheme.Name = defaultLightTheme.Name
+			}
+			if effectiveLightTheme.LogoPath == "" {
+				effectiveLightTheme.LogoPath = defaultLightTheme.LogoPath
+			}
+		} else {
+			// No light theme provided by user, use default light theme
+			effectiveLightTheme = defaultLightTheme
+		}
+
+		if isDarkUserProvided {
+			effectiveDarkTheme = userSpecThemes.Dark
+			if effectiveDarkTheme.Type == "" {
+				effectiveDarkTheme.Type = defaultDarkTheme.Type
+			}
+			if effectiveDarkTheme.Name == "" {
+				effectiveDarkTheme.Name = defaultDarkTheme.Name
+			}
+			if effectiveDarkTheme.LogoPath == "" {
+				effectiveDarkTheme.LogoPath = defaultDarkTheme.LogoPath
+			}
+		} else {
+			// No dark theme provided by user, use default dark theme
+			effectiveDarkTheme = defaultDarkTheme
+		}
+	}
+
+	configData := map[string]interface{}{
+		"productName":           scalityui.Spec.ProductName,
+		"canChangeTheme":        scalityui.Spec.CanChangeTheme,
+		"canChangeInstanceName": scalityui.Spec.CanChangeInstanceName,
+		"canChangeLanguage":     scalityui.Spec.CanChangeLanguage,
+		"themes": map[string]uiscalitycomv1alpha1.Theme{
+			"light": effectiveLightTheme,
+			"dark":  effectiveDarkTheme,
+		},
+	}
+
+	if scalityui.Spec.Favicon != "" {
+		configData["favicon"] = scalityui.Spec.Favicon
+	}
+	if scalityui.Spec.Logo != "" {
+		configData["logo"] = scalityui.Spec.Logo
+	}
+
+	if scalityui.Spec.DiscoveryURL != "" {
+		configData["discoveryURL"] = scalityui.Spec.DiscoveryURL
+	}
+
+	// Add Navbar to config if it's not empty
+	if len(scalityui.Spec.Navbar.Main) > 0 || len(scalityui.Spec.Navbar.SubLogin) > 0 {
+		configData["navbar"] = scalityui.Spec.Navbar
+	}
+
+	return json.Marshal(configData)
 }
 
 // createOrUpdateConfigMap creates or updates a ConfigMap with the given configuration
@@ -73,6 +154,9 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 		zero := intstr.FromInt(0)
 		one := intstr.FromInt(1)
 
+		// NOTE: Theme environment variables are removed from here.
+		// Theme configuration is now handled in createConfigJSON and passed via the ConfigMap.
+
 		deploy.Spec = appsv1.DeploymentSpec{
 			Replicas: &[]int32{1}[0],
 			Strategy: appsv1.DeploymentStrategy{
@@ -94,13 +178,18 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
-						{Name: scalityui.Name, Image: scalityui.Spec.Image, VolumeMounts: []corev1.VolumeMount{
-							{
-								Name:      scalityui.Name + "-volume",
-								MountPath: filepath.Join(mountPath, "config.json"),
-								SubPath:   "config.json",
+						{
+							Name:  scalityui.Name,
+							Image: scalityui.Spec.Image,
+							// Env:   envVars, // Theme env vars removed
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      scalityui.Name + "-volume",
+									MountPath: filepath.Join(mountPath, "config.json"),
+									SubPath:   "config.json",
+								},
 							},
-						}},
+						},
 					},
 					Volumes: []corev1.Volume{
 						{
@@ -118,6 +207,30 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 			},
 		}
 
+		return nil
+	})
+}
+
+// createOrUpdateService creates or updates a Service for the ScalityUI deployment
+func (r *ScalityUIReconciler) createOrUpdateService(ctx context.Context, service *corev1.Service, scalityui *uiscalitycomv1alpha1.ScalityUI) (controllerutil.OperationResult, error) {
+	// Set ScalityUI instance as the owner and controller
+	if err := controllerutil.SetControllerReference(scalityui, service, r.Scheme); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	return controllerutil.CreateOrUpdate(ctx, r.Client, service, func() error {
+		service.Spec.Selector = map[string]string{"app": scalityui.Name}
+		service.Spec.Ports = []corev1.ServicePort{
+			{
+				Name:       "http",
+				Protocol:   corev1.ProtocolTCP,
+				Port:       80,                 // Port exposed by the service
+				TargetPort: intstr.FromInt(80), // Port the container is listening on
+			},
+		}
+		// Explicitly set the service type to ClusterIP for clarity, even though it's the default.
+		service.Spec.Type = corev1.ServiceTypeClusterIP
+		// You can change to corev1.ServiceTypeLoadBalancer or corev1.ServiceTypeNodePort if needed.
 		return nil
 	})
 }
@@ -203,6 +316,40 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	r.Log.Info("ConfigMap exists", "name", existingConfigMap.Name)
+
+	// Define Service
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      scalityui.Name,
+			Namespace: scalityui.Namespace,
+		},
+	}
+
+	// Create or update Service
+	serviceResult, err := r.createOrUpdateService(ctx, service, scalityui)
+	if err != nil {
+		r.Log.Error(err, "Failed to create or update Service")
+		return ctrl.Result{}, err
+	}
+
+	// Log Service operation result
+	switch serviceResult {
+	case controllerutil.OperationResultCreated:
+		r.Log.Info("Service created", "name", service.Name)
+	case controllerutil.OperationResultUpdated:
+		r.Log.Info("Service updated", "name", service.Name)
+	case controllerutil.OperationResultNone:
+		r.Log.Info("Service unchanged", "name", service.Name)
+	}
+
+	// Verify Service exists (optional, for robustness)
+	existingService := &corev1.Service{}
+	err = r.Client.Get(ctx, client.ObjectKey{Name: service.Name, Namespace: service.Namespace}, existingService)
+	if err != nil {
+		r.Log.Error(err, "Service was not created/found successfully")
+		return ctrl.Result{}, err
+	}
+	r.Log.Info("Service exists", "name", existingService.Name)
 
 	// Define Deployment
 	deploy := &appsv1.Deployment{
