@@ -39,7 +39,7 @@ import (
 
 const (
 	DefaultScalityUIName      = "scality-ui"
-	DefaultScalityUINamespace = "default"
+	DefaultScalityUINamespace = "ui"
 )
 
 // createConfigJSON creates a JSON config from the ScalityUI object
