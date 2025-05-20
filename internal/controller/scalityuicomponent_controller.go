@@ -230,6 +230,37 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 	}
 
+	// Exposer
+	exposerName := fmt.Sprintf("%s-exposer", scalityUIComponent.Name)
+	exposer := &uiv1alpha1.ScalityUIComponentExposer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      exposerName,
+			Namespace: scalityUIComponent.Namespace,
+		},
+	}
+
+	op, err := ctrl.CreateOrUpdate(ctx, r.Client, exposer, func() error {
+		if err := ctrl.SetControllerReference(scalityUIComponent, exposer, r.Scheme); err != nil {
+			return err
+		}
+
+		exposer.Spec = uiv1alpha1.ScalityUIComponentExposerSpec{
+			ScalityUI:          DefaultScalityUIName,
+			ScalityUIComponent: scalityUIComponent.Name,
+		}
+		return nil
+	})
+
+	if err != nil {
+		logger.Error(err, "Failed to create or update ScalityUIComponentExposer")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Reconciled ScalityUIComponentExposer",
+		"component", scalityUIComponent.Name,
+		"exposer", exposer.Name,
+		"operation", op)
+
 	return ctrl.Result{}, nil
 }
 
@@ -270,5 +301,6 @@ func (r *ScalityUIComponentReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		For(&uiv1alpha1.ScalityUIComponent{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&uiv1alpha1.ScalityUIComponentExposer{}).
 		Complete(r)
 }

@@ -37,6 +37,11 @@ import (
 	uiscalitycomv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 )
 
+const (
+	DefaultScalityUIName      = "scality-ui"
+	DefaultScalityUINamespace = "default"
+)
+
 // createConfigJSON creates a JSON config from the ScalityUI object
 func createConfigJSON(scalityui *uiscalitycomv1alpha1.ScalityUI) ([]byte, error) {
 	configJSON := map[string]string{
