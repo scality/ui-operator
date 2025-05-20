@@ -89,6 +89,14 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 				Expect(k8sClient.Delete(ctx, service)).To(Succeed())
 			}
 
+			// Cleanup associated ScalityUIComponentExposer
+			exposerName := fmt.Sprintf("%s-exposer", resourceName)
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			_ = k8sClient.Get(ctx, types.NamespacedName{Name: exposerName, Namespace: testNamespace}, exposer)
+			if exposer.Name != "" {
+				Expect(k8sClient.Delete(ctx, exposer)).To(Succeed())
+			}
+
 			By("Cleanup the specific resource instance ScalityUIComponent")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
@@ -127,6 +135,79 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(service.Spec.Ports[0].Name).To(Equal("http"))
 			Expect(service.Spec.Ports[0].Protocol).To(Equal(corev1.ProtocolTCP))
 			Expect(service.Spec.Ports[0].Port).To(Equal(int32(80)))
+		})
+
+		It("should create ScalityUIComponentExposer for the component", func() {
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Making deployment ready")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.Replicas = 1
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Triggering reconciliation again")
+			// Create a mock server to handle the config fetch
+			testServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{
+					"kind": "UIModule", 
+					"apiVersion": "v1alpha1", 
+					"metadata": {"kind": "TestKind"}, 
+					"spec": {
+						"remoteEntryPath": "/remoteEntry.js", 
+						"publicPath": "/test-public/", 
+						"version": "1.2.3"
+					}
+				}`))
+			}))
+			defer testServer.Close()
+
+			testRESTConfig := rest.CopyConfig(cfg)
+			parsedURL, err := url.Parse(testServer.URL)
+			Expect(err).NotTo(HaveOccurred())
+			testRESTConfig.Host = parsedURL.Host
+			testRESTConfig.TLSClientConfig = rest.TLSClientConfig{Insecure: true}
+			testRESTConfig.BearerToken = ""
+
+			controllerReconciler.Config = testRESTConfig
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking if ScalityUIComponentExposer was created with correct specifications")
+			exposerName := fmt.Sprintf("%s-exposer", resourceName)
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      exposerName,
+				Namespace: testNamespace,
+			}, exposer)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify exposer spec
+			Expect(exposer.Spec.ScalityUI).To(Equal(DefaultScalityUIName))
+			Expect(exposer.Spec.ScalityUIComponent).To(Equal(resourceName))
+
+			// Verify owner reference is set correctly
+			Expect(exposer.OwnerReferences).To(HaveLen(1))
+			Expect(exposer.OwnerReferences[0].Name).To(Equal(resourceName))
+			Expect(exposer.OwnerReferences[0].Kind).To(Equal("ScalityUIComponent"))
 		})
 
 		It("should requeue if Deployment is not ready", func() {
