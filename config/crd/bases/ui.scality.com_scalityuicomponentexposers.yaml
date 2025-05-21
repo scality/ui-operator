@@ -41,16 +41,19 @@ spec:
             description: ScalityUIComponentExposerSpec defines the desired state of
               ScalityUIComponentExposer
             properties:
-              scality-ui:
+              appHistoryPath:
+                type: string
+              scalityUI:
                 description: |-
                   INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
                   Important: Run "make" to regenerate code after modifying this file
                 type: string
-              scality-ui-component:
+              scalityUIComponent:
                 type: string
             required:
-            - scality-ui
-            - scality-ui-component
+            - appHistoryPath
+            - scalityUI
+            - scalityUIComponent
             type: object
           status:
             description: ScalityUIComponentExposerStatus defines the observed state
