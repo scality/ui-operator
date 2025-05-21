@@ -589,7 +589,7 @@ func (r *ScalityUIComponentExposerReconciler) reconcileScalityUIDeployedApps(ctx
 
 // TODO: This is a temporary function to determine the URL for the component.
 func determineComponentURL(component *uiv1alpha1.ScalityUIComponent) string {
-	ingressPath := fmt.Sprintf("/%s", component.Status.PublicPath)
+	ingressPath := fmt.Sprintf("http://localhost:7780%s", component.Status.PublicPath)
 
 	return ingressPath
 }

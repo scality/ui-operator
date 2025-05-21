@@ -27,9 +27,9 @@ import (
 type ScalityUIComponentExposerSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	ScalityUI          string `json:"scality-ui"`
-	ScalityUIComponent string `json:"scality-ui-component"`
-	AppHistoryPath     string `json:"app-history-path"`
+	ScalityUI          string `json:"scalityUI"`
+	ScalityUIComponent string `json:"scalityUIComponent"`
+	AppHistoryPath     string `json:"appHistoryPath"`
 }
 
 // ScalityUIComponentExposerStatus defines the observed state of ScalityUIComponentExposer

@@ -247,6 +247,8 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		exposer.Spec = uiv1alpha1.ScalityUIComponentExposerSpec{
 			ScalityUI:          DefaultScalityUIName,
 			ScalityUIComponent: scalityUIComponent.Name,
+			// TODO: This is a temporary path for the app history.
+			AppHistoryPath: "/",
 		}
 		return nil
 	})
