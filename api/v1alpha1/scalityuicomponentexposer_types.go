@@ -29,6 +29,7 @@ type ScalityUIComponentExposerSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 	ScalityUI          string `json:"scality-ui"`
 	ScalityUIComponent string `json:"scality-ui-component"`
+	AppHistoryPath     string `json:"app-history-path"`
 }
 
 // ScalityUIComponentExposerStatus defines the observed state of ScalityUIComponentExposer
