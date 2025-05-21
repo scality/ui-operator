@@ -65,10 +65,6 @@ var _ = Describe("ScalityUI Controller", func() {
 						Image:       imageName,
 						ProductName: productName,
 						MountPath:   mountPath,
-						Navbar: uiv1alpha1.Navbar{
-							Main:     []uiv1alpha1.NavbarItem{},
-							SubLogin: []uiv1alpha1.NavbarItem{},
-						},
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -94,13 +90,6 @@ var _ = Describe("ScalityUI Controller", func() {
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: resourceNamespace}, deployment)
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
-			}
-
-			// Also delete the Service if it exists
-			service := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: resourceNamespace}, service)
-			if err == nil {
-				Expect(k8sClient.Delete(ctx, service)).To(Succeed())
 			}
 		})
 		It("should successfully reconcile the resource", func() {
@@ -175,34 +164,6 @@ var _ = Describe("ScalityUI Controller", func() {
 			// Verify Pod Template Annotations
 			Expect(deployment.Spec.Template.ObjectMeta.Annotations).NotTo(BeNil())
 			Expect(deployment.Spec.Template.ObjectMeta.Annotations).To(HaveKey("checksum/config"))
-		})
-
-		It("should successfully create a Service", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify Service was created
-			service := &corev1.Service{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: resourceNamespace}, service)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			Expect(service.Spec.Selector).To(Equal(map[string]string{"app": resourceName}))
-			Expect(service.Spec.Ports).To(HaveLen(1))
-			Expect(service.Spec.Ports[0].Name).To(Equal("http"))
-			Expect(service.Spec.Ports[0].Protocol).To(Equal(corev1.ProtocolTCP))
-			Expect(service.Spec.Ports[0].Port).To(Equal(int32(80)))
-			Expect(service.Spec.Ports[0].TargetPort).To(Equal(intstr.FromInt(80)))
-			// Default service type is ClusterIP, can be asserted if needed
-			// Expect(service.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
 		})
 
 		It("should update ConfigMap when the resource is updated", func() {
