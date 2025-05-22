@@ -59,10 +59,50 @@ type ConfigSpec struct {
 	Version         string `json:"version"`
 }
 
+// ConfigFetcher defines an interface for fetching UI component configurations
+type ConfigFetcher interface {
+	FetchConfig(ctx context.Context, namespace, serviceName string, port int) (string, error)
+}
+
+// K8sServiceProxyFetcher implements ConfigFetcher using Kubernetes service proxy
+type K8sServiceProxyFetcher struct {
+	Config *rest.Config
+}
+
+// FetchConfig retrieves the micro-app configuration from the specified service
+func (f *K8sServiceProxyFetcher) FetchConfig(ctx context.Context, namespace, serviceName string, port int) (string, error) {
+	logger := log.FromContext(ctx)
+
+	clientset, err := kubernetes.NewForConfig(f.Config)
+	if err != nil {
+		logger.Error(err, "Failed to create clientset")
+		return "", err
+	}
+
+	restClient := clientset.CoreV1().RESTClient()
+	req := restClient.Get().
+		Namespace(namespace).
+		Resource("services").
+		Name(fmt.Sprintf("%s:%d", serviceName, port)).
+		SubResource("proxy").
+		Suffix("/.well-known/micro-app-configuration")
+
+	// Execute the request
+	result := req.Do(ctx)
+	raw, err := result.Raw()
+	if err != nil {
+		logger.Error(err, "Failed to get configuration")
+		return "", err
+	}
+
+	return string(raw), nil
+}
+
 type ScalityUIComponentReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Config *rest.Config
+	Scheme        *runtime.Scheme
+	Config        *rest.Config
+	ConfigFetcher ConfigFetcher
 }
 
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuicomponents,verbs=get;list;watch;create;update;patch;delete
@@ -158,75 +198,38 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	if deployment.Status.ReadyReplicas > 0 {
-		// Fetch configuration
-		configContent, err := r.fetchMicroAppConfig(ctx, scalityUIComponent.Namespace, scalityUIComponent.Name)
+		// Fetch and process configuration
+		return r.processUIComponentConfig(ctx, scalityUIComponent)
+	} else {
+		logger.Info("Deployment not ready yet, waiting for pods to start")
+		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+	}
+}
 
-		if err != nil {
-			logger.Error(err, "Failed to fetch micro-app-configuration")
+// processUIComponentConfig fetches and processes UI component configuration,
+// updates the status and returns the reconcile result
+func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Context, scalityUIComponent *uiv1alpha1.ScalityUIComponent) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
 
-			// Add a failure condition
-			meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
-				Type:               "ConfigurationRetrieved",
-				Status:             metav1.ConditionFalse,
-				Reason:             "FetchFailed",
-				Message:            fmt.Sprintf("Failed to fetch configuration: %v", err),
-				LastTransitionTime: metav1.Now(),
-			})
+	// Fetch configuration
+	configContent, err := r.fetchMicroAppConfig(ctx, scalityUIComponent.Namespace, scalityUIComponent.Name)
 
-			if updateErr := r.Status().Update(ctx, scalityUIComponent); updateErr != nil {
-				logger.Error(updateErr, "Failed to update status with failure condition")
-			}
+	if err != nil {
+		logger.Error(err, "Failed to fetch micro-app-configuration")
 
-			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
-		}
-
-		// Parse JSON to extract information
-		var config MicroAppConfig
-		if err := json.Unmarshal([]byte(configContent), &config); err != nil {
-			logger.Error(err, "Failed to parse micro-app-configuration")
-
-			// Add a failure condition
-			meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
-				Type:               "ConfigurationRetrieved",
-				Status:             metav1.ConditionFalse,
-				Reason:             "ParseFailed",
-				Message:            fmt.Sprintf("Failed to parse configuration: %v", err),
-				LastTransitionTime: metav1.Now(),
-			})
-
-			if updateErr := r.Status().Update(ctx, scalityUIComponent); updateErr != nil {
-				logger.Error(updateErr, "Failed to update status with failure condition")
-			}
-
-			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
-		}
-
-		// Update status with retrieved information
-		scalityUIComponent.Status.Kind = config.Metadata.Kind
-		scalityUIComponent.Status.PublicPath = config.Spec.PublicPath
-		scalityUIComponent.Status.Version = config.Spec.Version
-
-		// Add a success condition
+		// Add a failure condition
 		meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
 			Type:               "ConfigurationRetrieved",
-			Status:             metav1.ConditionTrue,
-			Reason:             "FetchSucceeded",
-			Message:            "Successfully fetched and applied UI component configuration",
+			Status:             metav1.ConditionFalse,
+			Reason:             "FetchFailed",
+			Message:            fmt.Sprintf("Failed to fetch configuration: %v", err),
 			LastTransitionTime: metav1.Now(),
 		})
 
-		// Update the status
-		if err := r.Status().Update(ctx, scalityUIComponent); err != nil {
-			logger.Error(err, "Failed to update status with configuration")
-			return ctrl.Result{}, err
+		if updateErr := r.Status().Update(ctx, scalityUIComponent); updateErr != nil {
+			logger.Error(updateErr, "Failed to update status with failure condition")
 		}
 
-		logger.Info("ScalityUIComponent status updated with configuration",
-			"kind", scalityUIComponent.Status.Kind,
-			"publicPath", scalityUIComponent.Status.PublicPath,
-			"version", scalityUIComponent.Status.Version)
-	} else {
-		logger.Info("Deployment not ready yet, waiting for pods to start")
 		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 	}
 
@@ -262,42 +265,88 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		"component", scalityUIComponent.Name,
 		"exposer", exposer.Name,
 		"operation", op)
+	// Parse and apply configuration
+	result, err := r.parseAndApplyConfig(ctx, scalityUIComponent, configContent)
+	if err != nil {
+		return result, nil // Error handling is done in parseAndApplyConfig
+	}
+
+	logger.Info("ScalityUIComponent status updated with configuration",
+		"kind", scalityUIComponent.Status.Kind,
+		"publicPath", scalityUIComponent.Status.PublicPath,
+		"version", scalityUIComponent.Status.Version)
+
+	return ctrl.Result{}, nil
+}
+
+// parseAndApplyConfig parses the configuration content and updates the ScalityUIComponent status
+func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
+	scalityUIComponent *uiv1alpha1.ScalityUIComponent, configContent string) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	var config MicroAppConfig
+	if err := json.Unmarshal([]byte(configContent), &config); err != nil {
+		logger.Error(err, "Failed to parse micro-app-configuration")
+
+		// Add a failure condition
+		meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
+			Type:               "ConfigurationRetrieved",
+			Status:             metav1.ConditionFalse,
+			Reason:             "ParseFailed",
+			Message:            fmt.Sprintf("Failed to parse configuration: %v", err),
+			LastTransitionTime: metav1.Now(),
+		})
+
+		if updateErr := r.Status().Update(ctx, scalityUIComponent); updateErr != nil {
+			logger.Error(updateErr, "Failed to update status with failure condition")
+		}
+
+		return ctrl.Result{RequeueAfter: time.Second * 10}, err
+	}
+
+	// Update status with retrieved information
+	scalityUIComponent.Status.Kind = config.Metadata.Kind
+	scalityUIComponent.Status.PublicPath = config.Spec.PublicPath
+	scalityUIComponent.Status.Version = config.Spec.Version
+
+	// Add a success condition
+	meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
+		Type:               "ConfigurationRetrieved",
+		Status:             metav1.ConditionTrue,
+		Reason:             "FetchSucceeded",
+		Message:            "Successfully fetched and applied UI component configuration",
+		LastTransitionTime: metav1.Now(),
+	})
+
+	// Update the status
+	if err := r.Status().Update(ctx, scalityUIComponent); err != nil {
+		logger.Error(err, "Failed to update status with configuration")
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
 
 func (r *ScalityUIComponentReconciler) fetchMicroAppConfig(ctx context.Context, namespace, serviceName string) (string, error) {
-	logger := log.FromContext(ctx)
-
-	clientset, err := kubernetes.NewForConfig(r.Config)
-	if err != nil {
-		logger.Error(err, "Failed to create clientset")
-		return "", err
+	// Use the ConfigFetcher if available, otherwise use the default K8sServiceProxyFetcher
+	if r.ConfigFetcher != nil {
+		return r.ConfigFetcher.FetchConfig(ctx, namespace, serviceName, DefaultServicePort)
 	}
 
-	restClient := clientset.CoreV1().RESTClient()
-	req := restClient.Get().
-		Namespace(namespace).
-		Resource("services").
-		Name(fmt.Sprintf("%s:%d", serviceName, DefaultServicePort)).
-		SubResource("proxy").
-		Suffix("/.well-known/micro-app-configuration")
-
-	// Execute the request
-	result := req.Do(ctx)
-	raw, err := result.Raw()
-	if err != nil {
-		logger.Error(err, "Failed to get configuration")
-		return "", err
-	}
-
-	return string(raw), nil
+	// Default implementation using K8s service proxy
+	fetcher := &K8sServiceProxyFetcher{Config: r.Config}
+	return fetcher.FetchConfig(ctx, namespace, serviceName, DefaultServicePort)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ScalityUIComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Store the Kubernetes REST configuration for later use in API requests
 	r.Config = mgr.GetConfig()
+
+	// Initialize the default config fetcher if not explicitly provided
+	if r.ConfigFetcher == nil {
+		r.ConfigFetcher = &K8sServiceProxyFetcher{Config: r.Config}
+	}
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uiv1alpha1.ScalityUIComponent{}).

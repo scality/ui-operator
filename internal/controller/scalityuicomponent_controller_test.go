@@ -18,18 +18,19 @@ package controller
 
 import (
 	"context"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -37,8 +38,35 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
-	"k8s.io/client-go/rest"
 )
+
+// MockConfigFetcher is a mock implementation of the ConfigFetcher interface
+type MockConfigFetcher struct {
+	ShouldFail    bool
+	ErrorMessage  string
+	ConfigContent string
+	ReceivedCalls []MockFetchCall
+}
+
+type MockFetchCall struct {
+	Namespace   string
+	ServiceName string
+	Port        int
+}
+
+func (m *MockConfigFetcher) FetchConfig(ctx context.Context, namespace, serviceName string, port int) (string, error) {
+	call := MockFetchCall{
+		Namespace:   namespace,
+		ServiceName: serviceName,
+		Port:        port,
+	}
+	m.ReceivedCalls = append(m.ReceivedCalls, call)
+
+	if m.ShouldFail {
+		return "", errors.New(m.ErrorMessage)
+	}
+	return m.ConfigContent, nil
+}
 
 var _ = Describe("ScalityUIComponent Controller", func() {
 	Context("When reconciling a resource", func() {
@@ -57,7 +85,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind ScalityUIComponent")
 			err := k8sClient.Get(ctx, typeNamespacedName, scalityuicomponent)
-			if err != nil && errors.IsNotFound(err) {
+			if err != nil && apierrors.IsNotFound(err) {
 				resource := &uiv1alpha1.ScalityUIComponent{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
@@ -250,11 +278,18 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 		})
 
 		It("should set ConfigurationRetrieved=False condition if config fetch fails", func() {
+			By("Creating a mock config fetcher that fails")
+			mockFetcher := &MockConfigFetcher{
+				ShouldFail:   true,
+				ErrorMessage: "Mock fetching error",
+			}
+
 			By("Reconciling the created resource")
 			controllerReconciler := &ScalityUIComponentReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-				Config: cfg, // cfg should be available from test setup (suite_test.go)
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				Config:        cfg,
+				ConfigFetcher: mockFetcher,
 			}
 
 			// First reconcile to create Deployment and Service
@@ -273,15 +308,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			deployment.Status.Replicas = 1
 			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
 
-			// Ensure service exists, as fetchMicroAppConfig will try to proxy through it
-			service := &corev1.Service{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, typeNamespacedName, service)
-			}, time.Second*5, time.Millisecond*250).Should(Succeed())
-
 			By("Triggering Reconcile again for config fetch logic")
-			// In envtest, the service proxy will likely fail as no real pods are running.
-			// This simulates fetchMicroAppConfig returning an error.
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
@@ -297,16 +324,19 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("FetchFailed"))
 			Expect(cond.Message).To(ContainSubstring("Failed to fetch configuration"))
+
+			By("Verifying that the mock was called with correct parameters")
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
+			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
+			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
+			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
 		})
 
 		It("should set ConfigurationRetrieved=True and update status if config fetch and parse succeed", func() {
-			testServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				expectedPath := fmt.Sprintf("/api/v1/namespaces/%s/services/%s:80/proxy/.well-known/micro-app-configuration", testNamespace, resourceName)
-				Expect(r.URL.Path).To(Equal(expectedPath))
-
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{
+			By("Creating a mock config fetcher with successful response")
+			mockFetcher := &MockConfigFetcher{
+				ShouldFail: false,
+				ConfigContent: `{
 					"kind": "UIModule", 
 					"apiVersion": "v1alpha1", 
 					"metadata": {"kind": "TestKind"}, 
@@ -315,24 +345,17 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 						"publicPath": "/test-public/", 
 						"version": "1.2.3"
 					}
-				}`))
-			}))
-			defer testServer.Close()
-
-			testRESTConfig := rest.CopyConfig(cfg)
-			parsedURL, err := url.Parse(testServer.URL)
-			Expect(err).NotTo(HaveOccurred())
-			testRESTConfig.Host = parsedURL.Host
-			testRESTConfig.TLSClientConfig = rest.TLSClientConfig{Insecure: true}
-			testRESTConfig.BearerToken = ""
-
-			controllerReconciler := &ScalityUIComponentReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-				Config: testRESTConfig,
+				}`,
 			}
 
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				Config:        cfg,
+				ConfigFetcher: mockFetcher,
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			deployment := &appsv1.Deployment{}
@@ -340,11 +363,6 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			deployment.Status.ReadyReplicas = 1
 			deployment.Status.Replicas = 1
 			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
-
-			Eventually(func() error { // Ensure service is also there
-				service := &corev1.Service{}
-				return k8sClient.Get(ctx, typeNamespacedName, service)
-			}, time.Second*5, time.Millisecond*250).Should(Succeed())
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -361,33 +379,28 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal("FetchSucceeded"))
 			Expect(cond.Message).To(Equal("Successfully fetched and applied UI component configuration"))
+
+			By("Verifying that the mock was called with correct parameters")
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
+			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
+			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
 		})
 
 		It("should set ConfigurationRetrieved=False with ParseFailed reason if config parse fails", func() {
-			testServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				expectedPath := fmt.Sprintf("/api/v1/namespaces/%s/services/%s:80/proxy/.well-known/micro-app-configuration", testNamespace, resourceName)
-				Expect(r.URL.Path).To(Equal(expectedPath))
-
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"metadata": {"kind": "TestKind"}, "spec": {"publicPath": "/test/", "version": "1.2.3"}, MALFORMED`))
-			}))
-			defer testServer.Close()
-
-			testRESTConfig := rest.CopyConfig(cfg)
-			parsedURL, err := url.Parse(testServer.URL)
-			Expect(err).NotTo(HaveOccurred())
-			testRESTConfig.Host = parsedURL.Host
-			testRESTConfig.TLSClientConfig = rest.TLSClientConfig{Insecure: true}
-			testRESTConfig.BearerToken = ""
-
-			controllerReconciler := &ScalityUIComponentReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-				Config: testRESTConfig,
+			By("Creating a mock config fetcher with malformed JSON")
+			mockFetcher := &MockConfigFetcher{
+				ShouldFail:    false,
+				ConfigContent: `{"metadata": {"kind": "TestKind"}, "spec": {"publicPath": "/test/", "version": "1.2.3"}, MALFORMED`,
 			}
 
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				Config:        cfg,
+				ConfigFetcher: mockFetcher,
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			deployment := &appsv1.Deployment{}
@@ -395,11 +408,6 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			deployment.Status.ReadyReplicas = 1
 			deployment.Status.Replicas = 1
 			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
-
-			Eventually(func() error { // Ensure service is also there
-				service := &corev1.Service{}
-				return k8sClient.Get(ctx, typeNamespacedName, service)
-			}, time.Second*5, time.Millisecond*250).Should(Succeed())
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
