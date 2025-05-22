@@ -409,70 +409,30 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(ctx cont
 		"namespace", deployment.Namespace,
 		"name", deployment.Name)
 
+	configChanged := false
+
 	_, err = ctrl.CreateOrUpdate(ctx, r.Client, deployment, func() error {
 		volumeName := volumeNamePrefix + component.Name
 		configMapName := fmt.Sprintf("%s-runtime-app-configuration", component.Name)
 
-		// Define Volume
-		foundVolume := false
-		for i, vol := range deployment.Spec.Template.Spec.Volumes {
-			if vol.Name == volumeName {
-				if vol.ConfigMap == nil || vol.ConfigMap.Name != configMapName {
-					deployment.Spec.Template.Spec.Volumes[i].ConfigMap = &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: configMapName,
-						},
-					}
-				}
-				foundVolume = true
-				break
-			}
-		}
-		if !foundVolume {
-			deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-				Name: volumeName,
-				VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: configMapName,
-						},
-					},
-				},
-			})
-		}
+		// Update or add the ConfigMap volume
+		configChanged = ensureConfigMapVolume(deployment, volumeName, configMapName) || configChanged
 
-		// Define VolumeMount
+		// Update or add the ConfigMap volume mount for each container
 		for i := range deployment.Spec.Template.Spec.Containers {
-			container := &deployment.Spec.Template.Spec.Containers[i]
-			foundMount := false
-			for j, mount := range container.VolumeMounts {
-				if mount.Name == volumeName {
-					if mount.MountPath != "/usr/share/nginx/html/.well-known/runtime-app-configuration" || mount.SubPath != configMapKey {
-						deployment.Spec.Template.Spec.Containers[i].VolumeMounts[j].MountPath = "/usr/share/nginx/html/.well-known/runtime-app-configuration"
-						deployment.Spec.Template.Spec.Containers[i].VolumeMounts[j].SubPath = configMapKey
-						deployment.Spec.Template.Spec.Containers[i].VolumeMounts[j].ReadOnly = true
-					}
-					foundMount = true
-					break
-				}
-			}
-			if !foundMount {
-				container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
-					Name:      volumeName,
-					MountPath: "/usr/share/nginx/html/.well-known/runtime-app-configuration",
-					SubPath:   configMapKey,
-					ReadOnly:  true,
-				})
-			}
+			configChanged = ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName, configMapKey) || configChanged
 		}
 
-		// Set annotation to trigger rolling update
+		// Set annotation to trigger rolling update if configuration changed or hash is different
 		if deployment.Spec.Template.Annotations == nil {
 			deployment.Spec.Template.Annotations = make(map[string]string)
 		}
-		oldHash := deployment.Spec.Template.Annotations[configHashAnnotation]
-		if oldHash != configMapHash {
-			deployment.Spec.Template.Annotations[configHashAnnotation] = configMapHash
+
+		currentHash := deployment.Spec.Template.Annotations[configHashAnnotation]
+		if configChanged || currentHash != configMapHash {
+			// Force a unique value by appending a timestamp to ensure pod restart
+			timestamp := time.Now().Format(time.RFC3339)
+			deployment.Spec.Template.Annotations[configHashAnnotation] = configMapHash + "-" + timestamp
 		}
 
 		return nil
@@ -484,8 +444,69 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(ctx cont
 
 	logger.Info("Successfully updated deployment with ConfigMap mount",
 		"namespace", deployment.Namespace,
-		"name", deployment.Name)
+		"name", deployment.Name,
+		"configChanged", configChanged)
 	return nil
+}
+
+// ensureConfigMapVolume ensures the deployment has the specified ConfigMap volume
+// Returns true if the volume was added or modified
+func ensureConfigMapVolume(deployment *appsv1.Deployment, volumeName, configMapName string) bool {
+	for i, vol := range deployment.Spec.Template.Spec.Volumes {
+		if vol.Name == volumeName {
+			// Update existing volume if needed
+			if vol.ConfigMap == nil || vol.ConfigMap.Name != configMapName {
+				deployment.Spec.Template.Spec.Volumes[i].ConfigMap = &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: configMapName,
+					},
+				}
+				return true
+			}
+			return false // Volume exists and is correctly configured
+		}
+	}
+
+	// Add new volume
+	deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+		Name: volumeName,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMapName,
+				},
+			},
+		},
+	})
+	return true
+}
+
+// ensureConfigMapVolumeMount ensures the container has the specified volume mount
+// Returns true if the mount was added or modified
+func ensureConfigMapVolumeMount(container *corev1.Container, volumeName, subPath string) bool {
+	// Check for existing mount and update if needed
+	for i, mount := range container.VolumeMounts {
+		if mount.Name == volumeName {
+			if mount.MountPath != "/usr/share/nginx/html/.well-known/runtime-app-configuration" ||
+				mount.SubPath != subPath ||
+				!mount.ReadOnly {
+				container.VolumeMounts[i].MountPath = "/usr/share/nginx/html/.well-known/runtime-app-configuration"
+				container.VolumeMounts[i].SubPath = subPath
+				container.VolumeMounts[i].ReadOnly = true
+				return true
+			}
+			return false // Mount exists and is correctly configured
+		}
+	}
+
+	// Add new mount
+	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+		Name:      volumeName,
+		MountPath: "/usr/share/nginx/html/.well-known/runtime-app-configuration",
+		SubPath:   subPath,
+		ReadOnly:  true,
+	})
+	return true
 }
 
 // reconcileScalityUIDeployedApps updates or creates the deployed-ui-apps ConfigMap for ScalityUI
