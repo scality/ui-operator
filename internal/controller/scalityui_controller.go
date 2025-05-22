@@ -122,8 +122,8 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 
 		mountPath := "/usr/share/nginx/html/shell"
 		configVolumeName := scalityui.Name + "-config-volume"
-		deployedAppsVolumeName := scalityui.Name + "-deployed-apps-volume"
-		configMapDeployedAppsName := scalityui.Name + "-deployed-apps"
+		deployedAppsVolumeName := scalityui.Name + "-deployed-ui-apps-volume"
+		configMapDeployedAppsName := scalityui.Name + "-deployed-ui-apps"
 
 		zero := intstr.FromInt(0)
 		one := intstr.FromInt(1)
@@ -264,7 +264,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// ConfigMap for config.json is ensured to exist by createOrUpdateOwnedConfigMap
 
 	// Define ConfigMap for deployed-ui-apps.json
-	configMapDeployedAppsName := scalityui.Name + "-deployed-apps"
+	configMapDeployedAppsName := scalityui.Name + "-deployed-ui-apps"
 	configMapDeployedApps := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      configMapDeployedAppsName,

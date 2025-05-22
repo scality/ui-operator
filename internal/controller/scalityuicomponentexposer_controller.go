@@ -496,19 +496,8 @@ func (r *ScalityUIComponentExposerReconciler) reconcileScalityUIDeployedApps(ctx
 		Namespace: ui.Namespace,
 	}, configMap)
 
-	if err != nil && !errors.IsNotFound(err) {
+	if err != nil {
 		return fmt.Errorf("failed to get deployed-ui-apps ConfigMap: %w", err)
-	}
-
-	// Initialize empty ConfigMap if not found
-	if errors.IsNotFound(err) {
-		configMap = &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      configMapName,
-				Namespace: ui.Namespace,
-			},
-			Data: make(map[string]string),
-		}
 	}
 
 	logger.Info("Reconciling deployed-ui-apps ConfigMap",
@@ -589,7 +578,7 @@ func (r *ScalityUIComponentExposerReconciler) reconcileScalityUIDeployedApps(ctx
 
 // TODO: This is a temporary function to determine the URL for the component.
 func determineComponentURL(component *uiv1alpha1.ScalityUIComponent) string {
-	ingressPath := fmt.Sprintf("http://localhost:7780%s", component.Status.PublicPath)
+	ingressPath := component.Status.PublicPath
 
 	return ingressPath
 }

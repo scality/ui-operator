@@ -43,7 +43,7 @@ var _ = Describe("ScalityUI Controller", func() {
 			productName              = "Test Product"
 			imageName                = "nginx:latest"
 			baseMountPath            = "/usr/share/nginx/html/shell" // Updated to match controller
-			configMapDeployedAppsExt = "-deployed-apps"
+			configMapDeployedAppsExt = "-deployed-ui-apps"
 		)
 
 		ctx := context.Background()
@@ -150,7 +150,7 @@ var _ = Describe("ScalityUI Controller", func() {
 			Expect(themesData["light"]).To(HaveKeyWithValue("name", "artescaLight"))
 			Expect(themesData["dark"]).To(HaveKeyWithValue("name", "darkRebrand"))
 
-			// Verify deployed-apps ConfigMap
+			// Verify deployed-ui-apps ConfigMap
 			deployedAppsCm := &corev1.ConfigMap{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + configMapDeployedAppsExt, Namespace: resourceNamespace}, deployedAppsCm)
@@ -175,7 +175,7 @@ var _ = Describe("ScalityUI Controller", func() {
 					SubPath:   "config.json",
 				},
 				corev1.VolumeMount{
-					Name:      resourceName + "-deployed-apps-volume",
+					Name:      resourceName + "-deployed-ui-apps-volume",
 					MountPath: filepath.Join(baseMountPath, "deployed-ui-apps.json"),
 					SubPath:   "deployed-ui-apps.json",
 				},
@@ -196,7 +196,7 @@ var _ = Describe("ScalityUI Controller", func() {
 					},
 				},
 				corev1.Volume{
-					Name: resourceName + "-deployed-apps-volume",
+					Name: resourceName + "-deployed-ui-apps-volume",
 					VolumeSource: corev1.VolumeSource{
 						ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{Name: resourceName + configMapDeployedAppsExt},

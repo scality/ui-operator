@@ -117,6 +117,20 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
 			}
 
+			deployedAppsConfigMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      uiName + "-deployed-ui-apps",
+					Namespace: testNamespace,
+				},
+				Data: map[string]string{
+					"deployed-ui-apps.json": "[]",
+				},
+			}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: uiName + "-deployed-ui-apps", Namespace: testNamespace}, &corev1.ConfigMap{})
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, deployedAppsConfigMap)).To(Succeed())
+			}
+
 			// Finally create the ScalityUIComponentExposer
 			err = k8sClient.Get(ctx, typeNamespacedName, scalityuicomponentexposer)
 			if err != nil && errors.IsNotFound(err) {
@@ -175,6 +189,13 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: uiName, Namespace: testNamespace}, ui)
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, ui)).To(Succeed())
+			}
+
+			// Cleanup deployed-ui-apps ConfigMap
+			deployedAppsConfigMap := &corev1.ConfigMap{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: uiName + "-deployed-ui-apps", Namespace: testNamespace}, deployedAppsConfigMap)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, deployedAppsConfigMap)).To(Succeed())
 			}
 		})
 

@@ -49,8 +49,8 @@ spec:
                 type: string
               image:
                 description: |-
-                  Image specifies the container image to be used for the Scality UI.
-                  This should be a valid container image reference, including the tag.
+                  INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
+                  Important: Run "make" to regenerate code after modifying this file
                 type: string
               logo:
                 type: string
