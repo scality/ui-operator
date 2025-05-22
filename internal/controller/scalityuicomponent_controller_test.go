@@ -154,10 +154,11 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 		It("should requeue if Deployment is not ready", func() {
 			By("Reconciling the created resource")
+			mockFetcher := &MockConfigFetcher{}
 			controllerReconciler := &ScalityUIComponentReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-				Config: cfg, // cfg should be available from test setup (suite_test.go)
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ConfigFetcher: mockFetcher,
 			}
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -189,6 +190,8 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedScalityUIComponent)).To(Succeed())
 			cond := meta.FindStatusCondition(updatedScalityUIComponent.Status.Conditions, "ConfigurationRetrieved")
 			Expect(cond).To(BeNil())
+
+			Expect(mockFetcher.ReceivedCalls).To(BeEmpty()) // Ensure fetcher was not called
 		})
 
 		It("should set ConfigurationRetrieved=False condition if config fetch fails", func() {
@@ -202,7 +205,6 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			controllerReconciler := &ScalityUIComponentReconciler{
 				Client:        k8sClient,
 				Scheme:        k8sClient.Scheme(),
-				Config:        cfg,
 				ConfigFetcher: mockFetcher,
 			}
 
@@ -265,7 +267,6 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			controllerReconciler := &ScalityUIComponentReconciler{
 				Client:        k8sClient,
 				Scheme:        k8sClient.Scheme(),
-				Config:        cfg,
 				ConfigFetcher: mockFetcher,
 			}
 
@@ -310,7 +311,6 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			controllerReconciler := &ScalityUIComponentReconciler{
 				Client:        k8sClient,
 				Scheme:        k8sClient.Scheme(),
-				Config:        cfg,
 				ConfigFetcher: mockFetcher,
 			}
 

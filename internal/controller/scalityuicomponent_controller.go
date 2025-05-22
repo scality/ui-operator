@@ -87,11 +87,13 @@ func (f *K8sServiceProxyFetcher) FetchConfig(ctx context.Context, namespace, ser
 		SubResource("proxy").
 		Suffix("/.well-known/micro-app-configuration")
 
+	logger.Info("Fetching configuration via K8s proxy", "url", req.URL().String())
+
 	// Execute the request
 	result := req.Do(ctx)
 	raw, err := result.Raw()
 	if err != nil {
-		logger.Error(err, "Failed to get configuration")
+		logger.Error(err, "Failed to get configuration via K8s proxy")
 		return "", err
 	}
 
@@ -101,7 +103,6 @@ func (f *K8sServiceProxyFetcher) FetchConfig(ctx context.Context, namespace, ser
 type ScalityUIComponentReconciler struct {
 	client.Client
 	Scheme        *runtime.Scheme
-	Config        *rest.Config
 	ConfigFetcher ConfigFetcher
 }
 
@@ -296,24 +297,31 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 }
 
 func (r *ScalityUIComponentReconciler) fetchMicroAppConfig(ctx context.Context, namespace, serviceName string) (string, error) {
-	// Use the ConfigFetcher if available, otherwise use the default K8sServiceProxyFetcher
+	// Use the ConfigFetcher if available
 	if r.ConfigFetcher != nil {
 		return r.ConfigFetcher.FetchConfig(ctx, namespace, serviceName, DefaultServicePort)
 	}
 
-	// Default implementation using K8s service proxy
-	fetcher := &K8sServiceProxyFetcher{Config: r.Config}
-	return fetcher.FetchConfig(ctx, namespace, serviceName, DefaultServicePort)
+	// This fallback should ideally not be reached if ConfigFetcher is always initialized in SetupWithManager.
+	// However, as a safeguard or for direct calls in tests without full manager setup:
+	// We need a rest.Config here. The reconciler should have one if properly set up.
+	// This path indicates a potential misconfiguration or misuse if r.Config is nil.
+	logger := log.FromContext(ctx)
+	logger.Error(fmt.Errorf("ConfigFetcher not provided and no default REST config available in reconciler"), "Cannot fetch config without a ConfigFetcher or REST config")
+	return "", fmt.Errorf("config fetcher not initialized and no default REST config")
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ScalityUIComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Store the Kubernetes REST configuration for later use in API requests
-	r.Config = mgr.GetConfig()
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		log.FromContext(context.Background()).Info("Failed to get in-cluster config, using manager's config as fallback", "error", err.Error())
+		config = mgr.GetConfig()
+	}
 
 	// Initialize the default config fetcher if not explicitly provided
 	if r.ConfigFetcher == nil {
-		r.ConfigFetcher = &K8sServiceProxyFetcher{Config: r.Config}
+		r.ConfigFetcher = &K8sServiceProxyFetcher{Config: config}
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
