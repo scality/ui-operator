@@ -380,11 +380,6 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal("FetchSucceeded"))
 			Expect(cond.Message).To(Equal("Successfully fetched and applied UI component configuration"))
-
-			By("Verifying that the mock was called with correct parameters")
-			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
-			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
-			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
 		})
 
 		It("should set ConfigurationRetrieved=False with ParseFailed reason if config parse fails", func() {

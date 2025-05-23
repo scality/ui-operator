@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -27,8 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -66,38 +66,48 @@ type ConfigFetcher interface {
 
 // K8sServiceProxyFetcher implements ConfigFetcher using Kubernetes service proxy
 type K8sServiceProxyFetcher struct {
-	Config *rest.Config
+	// Config *rest.Config // No longer needed for direct HTTP GET
 }
 
 // FetchConfig retrieves the micro-app configuration from the specified service
 func (f *K8sServiceProxyFetcher) FetchConfig(ctx context.Context, namespace, serviceName string, port int) (string, error) {
 	logger := log.FromContext(ctx)
 
-	clientset, err := kubernetes.NewForConfig(f.Config)
+	// Construct the in-cluster service URL
+	// Example: http://my-service.my-namespace.svc.cluster.local:80/.well-known/micro-app-configuration
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/.well-known/micro-app-configuration", serviceName, namespace, port)
+
+	logger.Info("Fetching configuration via direct HTTP GET", "url", url)
+
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second, // Add a timeout for the HTTP request
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		logger.Error(err, "Failed to create clientset")
+		logger.Error(err, "Failed to create HTTP request")
 		return "", err
 	}
 
-	restClient := clientset.CoreV1().RESTClient()
-	req := restClient.Get().
-		Namespace(namespace).
-		Resource("services").
-		Name(fmt.Sprintf("%s:%d", serviceName, port)).
-		SubResource("proxy").
-		Suffix("/.well-known/micro-app-configuration")
-
-	logger.Info("Fetching configuration via K8s proxy", "url", req.URL().String())
-
-	// Execute the request
-	result := req.Do(ctx)
-	raw, err := result.Raw()
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		logger.Error(err, "Failed to get configuration via K8s proxy")
+		logger.Error(err, "Failed to get configuration via direct HTTP GET")
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("failed to fetch configuration, status code: %d", resp.StatusCode)
+		logger.Error(err, "HTTP request failed")
 		return "", err
 	}
 
-	return string(raw), nil
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Error(err, "Failed to read response body")
+		return "", err
+	}
+
+	return string(body), nil
 }
 
 type ScalityUIComponentReconciler struct {
@@ -345,15 +355,15 @@ func (r *ScalityUIComponentReconciler) fetchMicroAppConfig(ctx context.Context, 
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ScalityUIComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		log.FromContext(context.Background()).Info("Failed to get in-cluster config, using manager's config as fallback", "error", err.Error())
-		config = mgr.GetConfig()
-	}
+	// config, err := rest.InClusterConfig() // No longer needed here if K8sServiceProxyFetcher doesn't need it
+	// if err != nil {
+	// 	log.FromContext(context.Background()).Info("Failed to get in-cluster config, using manager's config as fallback", "error", err.Error())
+	// 	config = mgr.GetConfig()
+	// }
 
 	// Initialize the default config fetcher if not explicitly provided
 	if r.ConfigFetcher == nil {
-		r.ConfigFetcher = &K8sServiceProxyFetcher{Config: config}
+		r.ConfigFetcher = &K8sServiceProxyFetcher{} // Initialize without config
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
