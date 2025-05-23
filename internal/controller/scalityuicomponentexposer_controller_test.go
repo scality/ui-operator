@@ -221,7 +221,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			By("Checking if ConfigMap was created")
 			configMap := &corev1.ConfigMap{}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: testNamespace}, configMap)
+				return k8sClient.Get(ctx, types.NamespacedName{Name: fmt.Sprintf("%s-runtime-app-configuration", componentName), Namespace: testNamespace}, configMap)
 			}).Should(Succeed())
 			Expect(configMap.Data).To(HaveKey("runtime-app-configuration"))
 
@@ -238,7 +238,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				if vol.Name == volumeName {
 					foundVolume = true
 					Expect(vol.ConfigMap).NotTo(BeNil())
-					Expect(vol.ConfigMap.Name).To(Equal(resourceName))
+					Expect(vol.ConfigMap.Name).To(Equal(fmt.Sprintf("%s-runtime-app-configuration", componentName)))
 					break
 				}
 			}

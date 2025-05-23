@@ -244,38 +244,6 @@ func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Cont
 		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 	}
 
-	// Exposer
-	exposerName := fmt.Sprintf("%s-exposer", scalityUIComponent.Name)
-	exposer := &uiv1alpha1.ScalityUIComponentExposer{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      exposerName,
-			Namespace: scalityUIComponent.Namespace,
-		},
-	}
-
-	op, err := ctrl.CreateOrUpdate(ctx, r.Client, exposer, func() error {
-		if err := ctrl.SetControllerReference(scalityUIComponent, exposer, r.Scheme); err != nil {
-			return err
-		}
-
-		exposer.Spec = uiv1alpha1.ScalityUIComponentExposerSpec{
-			ScalityUI:          DefaultScalityUIName,
-			ScalityUIComponent: scalityUIComponent.Name,
-			// TODO: This is a temporary path for the app history.
-			AppHistoryPath: "/",
-		}
-		return nil
-	})
-
-	if err != nil {
-		logger.Error(err, "Failed to create or update ScalityUIComponentExposer")
-		return ctrl.Result{}, err
-	}
-
-	logger.Info("Reconciled ScalityUIComponentExposer",
-		"component", scalityUIComponent.Name,
-		"exposer", exposer.Name,
-		"operation", op)
 	// Parse and apply configuration
 	result, err := r.parseAndApplyConfig(ctx, scalityUIComponent, configContent)
 	if err != nil {
@@ -304,6 +272,8 @@ func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Cont
 		exposer.Spec = uiv1alpha1.ScalityUIComponentExposerSpec{
 			ScalityUI:          DefaultScalityUIName,
 			ScalityUIComponent: scalityUIComponent.Name,
+			// TODO: This is a temporary path for the app history.
+			AppHistoryPath: "/",
 		}
 		return nil
 	})

@@ -212,7 +212,19 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			testRESTConfig.TLSClientConfig = rest.TLSClientConfig{Insecure: true}
 			testRESTConfig.BearerToken = ""
 
-			controllerReconciler.Config = testRESTConfig
+			controllerReconciler.ConfigFetcher = &MockConfigFetcher{
+				ShouldFail: false,
+				ConfigContent: `{
+					"kind": "UIModule", 
+					"apiVersion": "v1alpha1", 
+					"metadata": {"kind": "TestKind"}, 
+					"spec": {
+						"remoteEntryPath": "/remoteEntry.js", 
+						"publicPath": "/test-public/", 
+						"version": "1.2.3"
+					}
+				}`,
+			}
 
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,

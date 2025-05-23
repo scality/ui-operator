@@ -317,7 +317,7 @@ func (r *ScalityUIComponentExposerReconciler) checkForIngressConflicts(ctx conte
 func (r *ScalityUIComponentExposerReconciler) reconcileScalityUIExposerConfigMap(ctx context.Context, exposer *uiv1alpha1.ScalityUIComponentExposer, ui *uiv1alpha1.ScalityUI, component *uiv1alpha1.ScalityUIComponent, logger logr.Logger) (*corev1.ConfigMap, error) {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      exposer.Name,
+			Name:      fmt.Sprintf("%s-runtime-app-configuration", component.Name),
 			Namespace: exposer.Namespace,
 		},
 	}
@@ -411,15 +411,16 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(ctx cont
 
 	_, err = ctrl.CreateOrUpdate(ctx, r.Client, deployment, func() error {
 		volumeName := volumeNamePrefix + component.Name
+		configMapName := fmt.Sprintf("%s-runtime-app-configuration", component.Name)
 
 		// Define Volume
 		foundVolume := false
 		for i, vol := range deployment.Spec.Template.Spec.Volumes {
 			if vol.Name == volumeName {
-				if vol.ConfigMap == nil || vol.ConfigMap.Name != exposer.Name {
+				if vol.ConfigMap == nil || vol.ConfigMap.Name != configMapName {
 					deployment.Spec.Template.Spec.Volumes[i].ConfigMap = &corev1.ConfigMapVolumeSource{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: exposer.Name,
+							Name: configMapName,
 						},
 					}
 				}
@@ -433,7 +434,7 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(ctx cont
 				VolumeSource: corev1.VolumeSource{
 					ConfigMap: &corev1.ConfigMapVolumeSource{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: exposer.Name,
+							Name: configMapName,
 						},
 					},
 				},
