@@ -5,5 +5,5 @@ metadata:
   name: scality-ui
   namespace: ui
 spec:
-  image: ghcr.io/scality/metalk8s/shell-ui:v130.0.0-dev-130.0.0-alpha.2-77-gce11d6eff
+  image: ghcr.io/scality/metalk8s/shell-ui:v130.0.0-dev-130.0.0-beta.1-4-ga8548e723
   productName: RING
