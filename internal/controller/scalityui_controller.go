@@ -164,6 +164,12 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 									SubPath:   "deployed-ui-apps.json",
 								},
 							},
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 80,
+									Protocol:      corev1.ProtocolTCP,
+								},
+							},
 						},
 					},
 					Volumes: []corev1.Volume{
