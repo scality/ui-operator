@@ -44,71 +44,19 @@ const (
 
 // createConfigJSON creates a JSON config from the ScalityUI object
 func createConfigJSON(scalityui *uiscalitycomv1alpha1.ScalityUI) ([]byte, error) {
-	configOutput := make(map[string]interface{})
-
-	// Basic fields
-	configOutput["productName"] = scalityui.Spec.ProductName
-	configOutput["discoveryUrl"] = "/shell/deployed-ui-apps.json" // Static value as requested
-
-	// Optional simple fields from spec
-	configOutput["canChangeTheme"] = scalityui.Spec.CanChangeTheme
-	configOutput["canChangeInstanceName"] = scalityui.Spec.CanChangeInstanceName
-	configOutput["canChangeLanguage"] = scalityui.Spec.CanChangeLanguage
-	// For omitempty string fields, if they are empty in spec, they will be empty strings in JSON
-	configOutput["favicon"] = scalityui.Spec.Favicon
-	configOutput["logo"] = scalityui.Spec.Logo
-
-	// Navbar configuration
-	// If Spec.Navbar is its zero value (e.g. not provided in CR),
-	// its Main and SubLogin slices will be nil.
-	navbarData := make(map[string]interface{})
-	if scalityui.Spec.Navbar.Main == nil {
-		navbarData["main"] = []uiscalitycomv1alpha1.NavbarItem{}
-	} else {
-		navbarData["main"] = scalityui.Spec.Navbar.Main
+	configJSON := map[string]string{
+		"productName": scalityui.Spec.ProductName,
 	}
 
-	if scalityui.Spec.Navbar.SubLogin == nil {
-		navbarData["subLogin"] = []uiscalitycomv1alpha1.NavbarItem{}
-	} else {
-		navbarData["subLogin"] = scalityui.Spec.Navbar.SubLogin
-	}
-	configOutput["navbar"] = navbarData
-
-	// Themes configuration
-	// If Spec.Themes is its zero value (e.g. 'themes' block not provided in CR),
-	// apply default themes. Otherwise, use the themes from the spec.
-	themesData := make(map[string]interface{})
-	if scalityui.Spec.Themes == (uiscalitycomv1alpha1.Themes{}) { // Check against zero value for the Themes struct
-		themesData["light"] = uiscalitycomv1alpha1.Theme{
-			Type:     "core-ui",
-			Name:     "artescaLight",
-			LogoPath: "",
-		}
-		themesData["dark"] = uiscalitycomv1alpha1.Theme{
-			Type:     "core-ui",
-			Name:     "darkRebrand",
-			LogoPath: "",
-		}
-	} else {
-		// User has provided the 'themes' block; use values from spec.
-		// Note: If the user provides `themes: {}` (an empty themes block),
-		// scalityui.Spec.Themes.Light and scalityui.Spec.Themes.Dark will be zero Theme structs.
-		themesData["light"] = scalityui.Spec.Themes.Light
-		themesData["dark"] = scalityui.Spec.Themes.Dark
-	}
-	configOutput["themes"] = themesData
-
-	return json.Marshal(configOutput)
+	return json.Marshal(configJSON)
 }
 
-// createOrUpdateOwnedConfigMap creates or updates a ConfigMap with the given data and sets an owner reference.
-func (r *ScalityUIReconciler) createOrUpdateOwnedConfigMap(ctx context.Context, owner metav1.Object, configMapToManage *corev1.ConfigMap, data map[string]string) (controllerutil.OperationResult, error) {
-	return controllerutil.CreateOrUpdate(ctx, r.Client, configMapToManage, func() error {
-		if err := controllerutil.SetControllerReference(owner, configMapToManage, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set owner reference on ConfigMap %s/%s: %w", configMapToManage.Namespace, configMapToManage.Name, err)
+// createOrUpdateConfigMap creates or updates a ConfigMap with the given configuration
+func (r *ScalityUIReconciler) createOrUpdateConfigMap(ctx context.Context, configMap *corev1.ConfigMap, configJSON []byte) (controllerutil.OperationResult, error) {
+	return controllerutil.CreateOrUpdate(ctx, r.Client, configMap, func() error {
+		configMap.Data = map[string]string{
+			"config.json": string(configJSON),
 		}
-		configMapToManage.Data = data
 		return nil
 	})
 }
@@ -116,14 +64,11 @@ func (r *ScalityUIReconciler) createOrUpdateOwnedConfigMap(ctx context.Context, 
 // createOrUpdateDeployment creates or updates a Deployment with the given configuration
 func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, deploy *appsv1.Deployment, scalityui *uiscalitycomv1alpha1.ScalityUI, configHash string) (controllerutil.OperationResult, error) {
 	return controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
-		if err := controllerutil.SetControllerReference(scalityui, deploy, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set owner reference on Deployment %s/%s: %w", deploy.Namespace, deploy.Name, err)
-		}
 
 		mountPath := "/usr/share/nginx/html/shell"
-		configVolumeName := scalityui.Name + "-config-volume"
-		deployedAppsVolumeName := scalityui.Name + "-deployed-ui-apps-volume"
-		configMapDeployedAppsName := scalityui.Name + "-deployed-ui-apps"
+		if scalityui.Spec.MountPath != "" {
+			mountPath = scalityui.Spec.MountPath
+		}
 
 		zero := intstr.FromInt(0)
 		one := intstr.FromInt(1)
@@ -149,46 +94,21 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
-						{
-							Name:  scalityui.Name,
-							Image: scalityui.Spec.Image,
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      configVolumeName,
-									MountPath: filepath.Join(mountPath, "config.json"),
-									SubPath:   "config.json",
-								},
-								{
-									Name:      deployedAppsVolumeName,
-									MountPath: filepath.Join(mountPath, "deployed-ui-apps.json"),
-									SubPath:   "deployed-ui-apps.json",
-								},
+						{Name: scalityui.Name, Image: scalityui.Spec.Image, VolumeMounts: []corev1.VolumeMount{
+							{
+								Name:      scalityui.Name + "-volume",
+								MountPath: filepath.Join(mountPath, "config.json"),
+								SubPath:   "config.json",
 							},
-							Ports: []corev1.ContainerPort{
-								{
-									ContainerPort: 80,
-									Protocol:      corev1.ProtocolTCP,
-								},
-							},
-						},
+						}},
 					},
 					Volumes: []corev1.Volume{
 						{
-							Name: configVolumeName,
+							Name: scalityui.Name + "-volume",
 							VolumeSource: corev1.VolumeSource{
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
-										Name: scalityui.Name, // Name of the ConfigMap for config.json
-									},
-								},
-							},
-						},
-						{
-							Name: deployedAppsVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: configMapDeployedAppsName, // Name of the ConfigMap for deployed-ui-apps.json
+										Name: scalityui.Name,
 									},
 								},
 							},
@@ -249,52 +169,40 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	h.Write(configJSON)
 	configHash := fmt.Sprintf("%x", h.Sum(nil))
 
-	// Define ConfigMap for config.json
+	// Define ConfigMap
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      scalityui.Name,
 			Namespace: scalityui.Namespace,
 		},
-	}
-	configJsonData := map[string]string{"config.json": string(configJSON)}
-
-	// Create or update ConfigMap for config.json
-	configMapResult, err := r.createOrUpdateOwnedConfigMap(ctx, scalityui, configMap, configJsonData)
-	if err != nil {
-		r.Log.Error(err, "Failed to create or update ConfigMap for config.json")
-		return ctrl.Result{}, err
-	}
-
-	logOperationResult(r.Log, configMapResult, "ConfigMap config.json", configMap.Name)
-
-	// ConfigMap for config.json is ensured to exist by createOrUpdateOwnedConfigMap
-
-	// Define ConfigMap for deployed-ui-apps.json
-	configMapDeployedAppsName := scalityui.Name + "-deployed-ui-apps"
-	configMapDeployedApps := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapDeployedAppsName,
-			Namespace: scalityui.Namespace,
+		Data: map[string]string{
+			"config.json": string(configJSON),
 		},
 	}
-	deployedAppsData := map[string]string{"deployed-ui-apps.json": "[]"}
 
-	// Create or update ConfigMap for deployed-ui-apps.json
-	configMapDeployedAppsResult, err := r.createOrUpdateOwnedConfigMap(ctx, scalityui, configMapDeployedApps, deployedAppsData)
+	// Create or update ConfigMap
+	configMapResult, err := r.createOrUpdateConfigMap(ctx, configMap, configJSON)
 	if err != nil {
-		r.Log.Error(err, "Failed to create or update ConfigMap for deployed-ui-apps.json")
+		r.Log.Error(err, "Failed to create or update ConfigMap")
 		return ctrl.Result{}, err
 	}
 
-	logOperationResult(r.Log, configMapDeployedAppsResult, "ConfigMap deployed-ui-apps.json", configMapDeployedApps.Name)
+	// Log ConfigMap operation result
+	switch configMapResult {
+	case controllerutil.OperationResultCreated:
+		r.Log.Info("ConfigMap created", "name", configMap.Name)
+	case controllerutil.OperationResultUpdated:
+		r.Log.Info("ConfigMap updated", "name", configMap.Name)
+	}
 
-	// Verify ConfigMap for deployed-ui-apps.json exists
-	err = r.Client.Get(ctx, client.ObjectKey{Name: configMapDeployedApps.Name, Namespace: configMapDeployedApps.Namespace}, &corev1.ConfigMap{})
+	// Verify ConfigMap exists
+	existingConfigMap := &corev1.ConfigMap{}
+	err = r.Client.Get(ctx, client.ObjectKey{Name: configMap.Name, Namespace: configMap.Namespace}, existingConfigMap)
 	if err != nil {
-		r.Log.Error(err, "ConfigMap for deployed-ui-apps.json was not created successfully")
+		r.Log.Error(err, "ConfigMap was not created successfully")
 		return ctrl.Result{}, err
 	}
-	r.Log.Info("ConfigMap deployed-ui-apps.json exists", "name", configMapDeployedApps.Name)
+	r.Log.Info("ConfigMap exists", "name", existingConfigMap.Name)
 
 	// Define Deployment
 	deploy := &appsv1.Deployment{
@@ -319,8 +227,6 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.Log.Info("Deployment updated", "name", deploy.Name)
 	case controllerutil.OperationResultNone:
 		r.Log.Info("Deployment unchanged", "name", deploy.Name)
-	default:
-		r.Log.Info("Deployment status", "name", deploy.Name, "result", deploymentResult)
 	}
 
 	// Verify Deployment exists
@@ -339,21 +245,5 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *ScalityUIReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uiscalitycomv1alpha1.ScalityUI{}).
-		Owns(&corev1.ConfigMap{}).
-		Owns(&appsv1.Deployment{}).
 		Complete(r)
-}
-
-// Helper function to log operation results
-func logOperationResult(logger logr.Logger, result controllerutil.OperationResult, resourceType string, resourceName string) {
-	switch result {
-	case controllerutil.OperationResultCreated:
-		logger.Info(fmt.Sprintf("%s created", resourceType), "name", resourceName)
-	case controllerutil.OperationResultUpdated:
-		logger.Info(fmt.Sprintf("%s updated", resourceType), "name", resourceName)
-	case controllerutil.OperationResultNone:
-		logger.Info(fmt.Sprintf("%s unchanged", resourceType), "name", resourceName)
-	default:
-		logger.Info(fmt.Sprintf("%s status", resourceType), "name", resourceName, "result", result)
-	}
 }
