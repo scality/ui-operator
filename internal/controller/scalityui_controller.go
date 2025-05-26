@@ -25,6 +25,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -117,6 +118,72 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 	})
 }
 
+// createOrUpdateIngress creates or updates an Ingress with the given configuration
+func (r *ScalityUIReconciler) createOrUpdateIngress(ctx context.Context, ingress *networkingv1.Ingress, scalityui *uiscalitycomv1alpha1.ScalityUI) (controllerutil.OperationResult, error) {
+	return controllerutil.CreateOrUpdate(ctx, r.Client, ingress, func() error {
+		pathType := networkingv1.PathTypePrefix
+
+		// Set annotations if provided
+		if len(scalityui.Spec.Networks.IngressAnnotations) > 0 {
+			if ingress.Annotations == nil {
+				ingress.Annotations = make(map[string]string)
+			}
+			for key, value := range scalityui.Spec.Networks.IngressAnnotations {
+				ingress.Annotations[key] = value
+			}
+		}
+
+		// Create the basic ingress rule
+		ingressRule := networkingv1.IngressRule{
+			IngressRuleValue: networkingv1.IngressRuleValue{
+				HTTP: &networkingv1.HTTPIngressRuleValue{
+					Paths: []networkingv1.HTTPIngressPath{
+						{
+							Path:     "/",
+							PathType: &pathType,
+							Backend: networkingv1.IngressBackend{
+								Service: &networkingv1.IngressServiceBackend{
+									Name: scalityui.Name,
+									Port: networkingv1.ServiceBackendPort{
+										Number: 80,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Set host if provided
+		if scalityui.Spec.Networks.Host != "" {
+			ingressRule.Host = scalityui.Spec.Networks.Host
+		}
+
+		ingress.Spec = networkingv1.IngressSpec{
+			Rules: []networkingv1.IngressRule{ingressRule},
+		}
+
+		// Set IngressClassName if provided
+		if scalityui.Spec.Networks.IngressClassName != "" {
+			ingress.Spec.IngressClassName = &scalityui.Spec.Networks.IngressClassName
+		}
+
+		// Add TLS configuration if provided
+		if len(scalityui.Spec.Networks.TLS) > 0 {
+			ingress.Spec.TLS = make([]networkingv1.IngressTLS, len(scalityui.Spec.Networks.TLS))
+			for i, tls := range scalityui.Spec.Networks.TLS {
+				ingress.Spec.TLS[i] = networkingv1.IngressTLS{
+					Hosts:      tls.Hosts,
+					SecretName: tls.SecretName,
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
 // ScalityUIReconciler reconciles a ScalityUI object
 type ScalityUIReconciler struct {
 	client.Client
@@ -127,6 +194,7 @@ type ScalityUIReconciler struct {
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuis,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuis/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuis/finalizers,verbs=update
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -232,6 +300,43 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	r.Log.Info("Deployment exists", "name", existingDeployment.Name)
+
+	// Always create Ingress (either with Networks configuration or default)
+	{
+		// Define Ingress
+		ingress := &networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      scalityui.Name,
+				Namespace: scalityui.Namespace,
+			},
+		}
+
+		// Create or update Ingress
+		ingressResult, err := r.createOrUpdateIngress(ctx, ingress, scalityui)
+		if err != nil {
+			r.Log.Error(err, "Failed to create or update Ingress")
+			return ctrl.Result{}, err
+		}
+
+		// Log Ingress operation result
+		switch ingressResult {
+		case controllerutil.OperationResultCreated:
+			r.Log.Info("Ingress created", "name", ingress.Name)
+		case controllerutil.OperationResultUpdated:
+			r.Log.Info("Ingress updated", "name", ingress.Name)
+		case controllerutil.OperationResultNone:
+			r.Log.Info("Ingress unchanged", "name", ingress.Name)
+		}
+
+		// Verify Ingress exists
+		existingIngress := &networkingv1.Ingress{}
+		err = r.Client.Get(ctx, client.ObjectKey{Name: ingress.Name, Namespace: ingress.Namespace}, existingIngress)
+		if err != nil {
+			r.Log.Error(err, "Ingress was not created successfully")
+			return ctrl.Result{}, err
+		}
+		r.Log.Info("Ingress exists", "name", existingIngress.Name)
+	}
 
 	return ctrl.Result{}, nil
 }

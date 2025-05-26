@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -260,5 +261,157 @@ var _ = Describe("ScalityUI Controller", func() {
 			Expect(string(configJSON)).To(ContainSubstring("Test Product Direct"))
 		})
 
+	})
+
+	Context("When managing Ingress resources", func() {
+		const (
+			resourceName      = "test-ui-ingress"
+			resourceNamespace = "default"
+			productName       = "Test UI with Ingress"
+			imageName         = "nginx:latest"
+		)
+
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: resourceNamespace,
+		}
+
+		AfterEach(func() {
+			// Clean up resources
+			resource := &uiv1alpha1.ScalityUI{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+
+			// Clean up Ingress
+			ingress := &networkingv1.Ingress{}
+			err = k8sClient.Get(ctx, typeNamespacedName, ingress)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, ingress)).To(Succeed())
+			}
+		})
+
+		It("should create a default Ingress when no network configuration is provided", func() {
+			By("Creating a ScalityUI without network configuration")
+			resource := &uiv1alpha1.ScalityUI{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: resourceNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUISpec{
+					Image:       imageName,
+					ProductName: productName,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Reconciling the resource")
+			controllerReconciler := &ScalityUIReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying that an Ingress is created")
+			ingress := &networkingv1.Ingress{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, ingress)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			By("Verifying the Ingress has basic configuration")
+			Expect(ingress.Spec.Rules).To(HaveLen(1))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths).To(HaveLen(1))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/"))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Name).To(Equal(resourceName))
+		})
+
+		It("should create a custom Ingress when network configuration is provided", func() {
+			By("Creating a ScalityUI with network configuration")
+			resource := &uiv1alpha1.ScalityUI{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: resourceNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUISpec{
+					Image:       imageName,
+					ProductName: productName,
+					Networks: uiv1alpha1.UINetworks{
+						Host:             "test.example.com",
+						IngressClassName: "nginx",
+						IngressAnnotations: map[string]string{
+							"nginx.ingress.kubernetes.io/ssl-redirect": "false",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Reconciling the resource")
+			controllerReconciler := &ScalityUIReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying that an Ingress is created with custom configuration")
+			ingress := &networkingv1.Ingress{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, ingress)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			By("Verifying the Ingress has the specified host and class")
+			Expect(ingress.Spec.IngressClassName).NotTo(BeNil())
+			Expect(*ingress.Spec.IngressClassName).To(Equal("nginx"))
+			Expect(ingress.Spec.Rules).To(HaveLen(1))
+			Expect(ingress.Spec.Rules[0].Host).To(Equal("test.example.com"))
+
+			By("Verifying the Ingress has the specified annotations")
+			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/ssl-redirect"))
+			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"]).To(Equal("false"))
+		})
+
+		It("should expose the application at the root path", func() {
+			By("Creating a ScalityUI resource")
+			resource := &uiv1alpha1.ScalityUI{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: resourceNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUISpec{
+					Image:       imageName,
+					ProductName: productName,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Reconciling the resource")
+			controllerReconciler := &ScalityUIReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the Ingress routes traffic to the root path")
+			ingress := &networkingv1.Ingress{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, ingress)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			By("Verifying the path configuration allows access to the application")
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/"))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].PathType).NotTo(BeNil())
+			Expect(*ingress.Spec.Rules[0].HTTP.Paths[0].PathType).To(Equal(networkingv1.PathTypePrefix))
+		})
 	})
 })
