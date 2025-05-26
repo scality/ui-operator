@@ -331,5 +331,204 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond.Reason).To(Equal("ParseFailed"))
 			Expect(cond.Message).To(ContainSubstring("Failed to parse configuration:"))
 		})
+
+		It("should preserve existing volumes and volume mounts when updating deployment", func() {
+			By("Creating a deployment with existing volumes and volume mounts")
+			existingDeployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": resourceName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": resourceName,
+							},
+							Annotations: map[string]string{
+								"existing-annotation": "existing-value",
+							},
+						},
+						Spec: corev1.PodSpec{
+							Volumes: []corev1.Volume{
+								{
+									Name: "existing-volume",
+									VolumeSource: corev1.VolumeSource{
+										EmptyDir: &corev1.EmptyDirVolumeSource{},
+									},
+								},
+								{
+									Name: "config-volume-test",
+									VolumeSource: corev1.VolumeSource{
+										ConfigMap: &corev1.ConfigMapVolumeSource{
+											LocalObjectReference: corev1.LocalObjectReference{
+												Name: "existing-configmap",
+											},
+										},
+									},
+								},
+							},
+							Containers: []corev1.Container{
+								{
+									Name:  resourceName,
+									Image: "old-image:latest",
+									VolumeMounts: []corev1.VolumeMount{
+										{
+											Name:      "existing-volume",
+											MountPath: "/existing",
+										},
+										{
+											Name:      "config-volume-test",
+											MountPath: "/config",
+											SubPath:   "config.json",
+											ReadOnly:  true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			// Delete any existing deployment first
+			existingDep := &appsv1.Deployment{}
+			if err := k8sClient.Get(ctx, typeNamespacedName, existingDep); err == nil {
+				Expect(k8sClient.Delete(ctx, existingDep)).To(Succeed())
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, typeNamespacedName, existingDep)
+					return err != nil
+				}, time.Second*5, time.Millisecond*250).Should(BeTrue())
+			}
+
+			Expect(k8sClient.Create(ctx, existingDeployment)).To(Succeed())
+
+			By("Reconciling the ScalityUIComponent")
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying that existing volumes and volume mounts are preserved")
+			updatedDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
+
+			// Check that the image was updated
+			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal(testImage))
+
+			// Check that existing volumes are preserved
+			Expect(updatedDeployment.Spec.Template.Spec.Volumes).To(HaveLen(2))
+			volumeNames := make([]string, len(updatedDeployment.Spec.Template.Spec.Volumes))
+			for i, vol := range updatedDeployment.Spec.Template.Spec.Volumes {
+				volumeNames[i] = vol.Name
+			}
+			Expect(volumeNames).To(ContainElements("existing-volume", "config-volume-test"))
+
+			// Check that existing volume mounts are preserved
+			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(HaveLen(2))
+			mountNames := make([]string, len(updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts))
+			for i, mount := range updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts {
+				mountNames[i] = mount.Name
+			}
+			Expect(mountNames).To(ContainElements("existing-volume", "config-volume-test"))
+
+			// Check that existing annotations are preserved
+			Expect(updatedDeployment.Spec.Template.Annotations).To(HaveKeyWithValue("existing-annotation", "existing-value"))
+
+			// Verify specific volume mount properties are preserved
+			var existingVolumeMount, configVolumeMount corev1.VolumeMount
+			for _, mount := range updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts {
+				if mount.Name == "existing-volume" {
+					existingVolumeMount = mount
+				} else if mount.Name == "config-volume-test" {
+					configVolumeMount = mount
+				}
+			}
+			Expect(existingVolumeMount.MountPath).To(Equal("/existing"))
+			Expect(configVolumeMount.MountPath).To(Equal("/config"))
+			Expect(configVolumeMount.SubPath).To(Equal("config.json"))
+			Expect(configVolumeMount.ReadOnly).To(BeTrue())
+		})
+
+		It("should handle deployment with no existing volumes or annotations", func() {
+			By("Creating a deployment with no existing volumes or annotations")
+			basicDeployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": resourceName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": resourceName,
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  resourceName,
+									Image: "old-image:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+
+			// Delete any existing deployment first
+			existingDep := &appsv1.Deployment{}
+			if err := k8sClient.Get(ctx, typeNamespacedName, existingDep); err == nil {
+				Expect(k8sClient.Delete(ctx, existingDep)).To(Succeed())
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, typeNamespacedName, existingDep)
+					return err != nil
+				}, time.Second*5, time.Millisecond*250).Should(BeTrue())
+			}
+
+			Expect(k8sClient.Create(ctx, basicDeployment)).To(Succeed())
+
+			By("Reconciling the ScalityUIComponent")
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying that deployment is updated correctly without errors")
+			updatedDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
+
+			// Check that the image was updated
+			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal(testImage))
+
+			// Check that no volumes exist (since there were none before)
+			Expect(updatedDeployment.Spec.Template.Spec.Volumes).To(BeEmpty())
+
+			// Check that no volume mounts exist (since there were none before)
+			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(BeEmpty())
+
+			// Check that no annotations exist (since there were none before)
+			Expect(updatedDeployment.Spec.Template.Annotations).To(BeNil())
+		})
 	})
 })

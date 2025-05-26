@@ -138,6 +138,19 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	deploymentResult, err := ctrl.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+		// Preserve existing volumes and annotations if they exist
+		existingVolumes := deployment.Spec.Template.Spec.Volumes
+		existingAnnotations := deployment.Spec.Template.Annotations
+
+		// Preserve existing volume mounts for each container
+		var existingVolumeMounts [][]corev1.VolumeMount
+		if len(deployment.Spec.Template.Spec.Containers) > 0 {
+			existingVolumeMounts = make([][]corev1.VolumeMount, len(deployment.Spec.Template.Spec.Containers))
+			for i, container := range deployment.Spec.Template.Spec.Containers {
+				existingVolumeMounts[i] = container.VolumeMounts
+			}
+		}
+
 		deployment.Spec = appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
@@ -149,8 +162,10 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 					Labels: map[string]string{
 						"app": scalityUIComponent.Name,
 					},
+					Annotations: existingAnnotations,
 				},
 				Spec: corev1.PodSpec{
+					Volumes: existingVolumes,
 					Containers: []corev1.Container{
 						{
 							Name:  scalityUIComponent.Name,
@@ -160,6 +175,12 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 				},
 			},
 		}
+
+		// Restore volume mounts for the main container if they existed
+		if len(existingVolumeMounts) > 0 && len(existingVolumeMounts[0]) > 0 {
+			deployment.Spec.Template.Spec.Containers[0].VolumeMounts = existingVolumeMounts[0]
+		}
+
 		return nil
 	})
 
