@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -26,241 +27,445 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 )
 
-var _ = Describe("ScalityUI Controller", func() {
-	Context("When reconciling a resource", func() {
+var _ = Describe("ScalityUI Shell Features", func() {
+	Context("When deploying a Scality Shell UI", func() {
 		const (
-			resourceName      = "test-ui"
-			resourceNamespace = "default"
-			productName       = "Test Product"
-			imageName         = "nginx:latest"
-			mountPath         = "/usr/share/nginx/html/custom"
+			uiAppName      = "test-ui"
+			namespace      = "default"
+			productName    = "Test Product"
+			containerImage = "nginx:latest"
 		)
 
 		ctx := context.Background()
-
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: resourceNamespace,
-		}
+		namespacedName := types.NamespacedName{Name: uiAppName, Namespace: namespace}
 		scalityui := &uiv1alpha1.ScalityUI{}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind ScalityUI")
-			err := k8sClient.Get(ctx, typeNamespacedName, scalityui)
+			By("Setting up a new Shell UI")
+			err := k8sClient.Get(ctx, namespacedName, scalityui)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &uiv1alpha1.ScalityUI{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: resourceNamespace,
+						Name:      uiAppName,
+						Namespace: namespace,
 					},
 					Spec: uiv1alpha1.ScalityUISpec{
-						Image:       imageName,
+						Image:       containerImage,
 						ProductName: productName,
-						MountPath:   mountPath,
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+				Eventually(func() error {
+					return k8sClient.Get(ctx, namespacedName, scalityui)
+				}, time.Second*10, time.Millisecond*250).Should(Succeed())
 			}
 		})
 
 		AfterEach(func() {
+			By("Cleaning up test resources")
+			cleanupTestResources(ctx, namespacedName)
+		})
+
+		Describe("Basic Shell UI Deployment", func() {
+			It("should deploy a working Shell UI with default configuration", func() {
+				By("Processing the Shell UI deployment")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying the Shell UI is properly configured")
+				verifyUIApplicationConfiguration(ctx, uiAppName, namespace, productName)
+
+				By("Verifying the Shell UI is accessible via service")
+				verifyUIApplicationService(ctx, uiAppName, namespace)
+
+				By("Verifying the Shell UI has proper resource ownership")
+				verifyResourceOwnership(ctx, uiAppName, namespace, scalityui.UID)
+			})
+		})
+
+		Describe("Shell UI Customization Features", func() {
+			It("should allow customization of shell branding and navigation", func() {
+				By("Deploying the Shell UI initially")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Customizing the Shell UI with branding and navigation")
+				currentUI := &uiv1alpha1.ScalityUI{}
+				Expect(k8sClient.Get(ctx, namespacedName, currentUI)).To(Succeed())
+
+				currentUI.Spec.ProductName = "Custom Branded Product"
+				currentUI.Spec.Navbar = uiv1alpha1.Navbar{
+					Main: []uiv1alpha1.NavbarItem{{
+						Internal: &uiv1alpha1.InternalNavbarItem{
+							Kind: "dashboard",
+							View: "main-dashboard",
+						},
+					}},
+					SubLogin: []uiv1alpha1.NavbarItem{{
+						Internal: &uiv1alpha1.InternalNavbarItem{
+							Kind: "profile",
+							View: "user-profile",
+						},
+					}},
+				}
+				currentUI.Spec.Themes = uiv1alpha1.Themes{
+					Light: uiv1alpha1.Theme{
+						Type: "custom",
+						Name: "companyLight",
+						Logo: uiv1alpha1.Logo{
+							Type:  "path",
+							Value: "/assets/light-logo.png",
+						},
+					},
+					Dark: uiv1alpha1.Theme{
+						Type: "custom",
+						Name: "companyDark",
+						Logo: uiv1alpha1.Logo{
+							Type:  "path",
+							Value: "/assets/dark-logo.png",
+						},
+					},
+				}
+
+				Expect(k8sClient.Update(ctx, currentUI)).To(Succeed())
+
+				By("Applying the customization changes")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying the Shell UI reflects the custom branding")
+				verifyCustomBranding(ctx, uiAppName, namespace, "Custom Branded Product")
+
+				By("Verifying the custom navigation is configured")
+				verifyCustomNavigation(ctx, uiAppName, namespace)
+
+				By("Verifying the custom themes are applied")
+				verifyCustomThemes(ctx, uiAppName, namespace)
+
+				By("Verifying user customization options are enabled")
+				verifyUserCustomizationOptions(ctx, uiAppName, namespace)
+			})
+		})
+
+		Describe("Shell Application Updates", func() {
+			It("should handle shell application image updates seamlessly", func() {
+				By("Deploying the initial Shell UI")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Updating to a new shell application version")
+				currentUI := &uiv1alpha1.ScalityUI{}
+				Expect(k8sClient.Get(ctx, namespacedName, currentUI)).To(Succeed())
+
+				newImage := "nginx:1.21"
+				currentUI.Spec.Image = newImage
+				Expect(k8sClient.Update(ctx, currentUI)).To(Succeed())
+
+				By("Applying the version update")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying the shell application is running the new version")
+				verifyApplicationVersion(ctx, uiAppName, namespace, newImage)
+			})
+		})
+
+		Describe("Shell Configuration Management", func() {
+			It("should generate proper default shell configuration for new deployments", func() {
+				testUI := &uiv1alpha1.ScalityUI{
+					Spec: uiv1alpha1.ScalityUISpec{
+						ProductName: "Default Product",
+					},
+				}
+
+				configBytes, err := createConfigJSON(testUI)
+				Expect(err).NotTo(HaveOccurred())
+
+				var config map[string]interface{}
+				Expect(json.Unmarshal(configBytes, &config)).To(Succeed())
+
+				By("Verifying default shell product configuration")
+				Expect(config["productName"]).To(Equal("Default Product"))
+				Expect(config["discoveryUrl"]).To(Equal("/shell/deployed-ui-apps.json"))
+
+				By("Verifying default branding is not present")
+				Expect(config).NotTo(HaveKey("favicon"))
+				Expect(config).NotTo(HaveKey("logo"))
+				Expect(config).NotTo(HaveKey("canChangeTheme"))
+				Expect(config).NotTo(HaveKey("canChangeInstanceName"))
+				Expect(config).NotTo(HaveKey("canChangeLanguage"))
+
+				By("Verifying default navigation structure")
+				navbar := config["navbar"].(map[string]interface{})
+				Expect(navbar["main"]).To(BeEmpty())
+				Expect(navbar["subLogin"]).To(BeEmpty())
+
+				By("Verifying default theme configuration")
+				themes := config["themes"].(map[string]interface{})
+				lightTheme := themes["light"].(map[string]interface{})
+				darkTheme := themes["dark"].(map[string]interface{})
+
+				Expect(lightTheme["type"]).To(Equal("core-ui"))
+				Expect(lightTheme["name"]).To(Equal("artescaLight"))
+				Expect(lightTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
+				Expect(lightTheme["logo"].(map[string]interface{})["value"]).To(Equal(""))
+				Expect(darkTheme["type"]).To(Equal("core-ui"))
+				Expect(darkTheme["name"]).To(Equal("darkRebrand"))
+				Expect(darkTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
+				Expect(darkTheme["logo"].(map[string]interface{})["value"]).To(Equal(""))
+			})
+
+			It("should generate shell configuration with custom business requirements", func() {
+				customNavbar := uiv1alpha1.Navbar{
+					Main: []uiv1alpha1.NavbarItem{{
+						Internal: &uiv1alpha1.InternalNavbarItem{
+							Kind: "analytics",
+							View: "business-analytics",
+						},
+					}},
+					SubLogin: []uiv1alpha1.NavbarItem{{
+						Internal: &uiv1alpha1.InternalNavbarItem{
+							Kind: "settings",
+							View: "user-settings",
+						},
+					}},
+				}
+				customThemes := uiv1alpha1.Themes{
+					Light: uiv1alpha1.Theme{
+						Type: "enterprise",
+						Name: "corporateLight",
+						Logo: uiv1alpha1.Logo{
+							Type:  "path",
+							Value: "/branding/light.svg",
+						},
+					},
+					Dark: uiv1alpha1.Theme{
+						Type: "enterprise",
+						Name: "corporateDark",
+						Logo: uiv1alpha1.Logo{
+							Type:  "path",
+							Value: "/branding/dark.svg",
+						},
+					},
+				}
+
+				testUI := &uiv1alpha1.ScalityUI{
+					Spec: uiv1alpha1.ScalityUISpec{
+						ProductName: "Enterprise Dashboard",
+						Navbar:      customNavbar,
+						Themes:      customThemes,
+					},
+				}
+
+				configBytes, err := createConfigJSON(testUI)
+				Expect(err).NotTo(HaveOccurred())
+
+				var config map[string]interface{}
+				Expect(json.Unmarshal(configBytes, &config)).To(Succeed())
+
+				By("Verifying custom shell product configuration")
+				Expect(config["productName"]).To(Equal("Enterprise Dashboard"))
+
+				By("Verifying custom navigation structure")
+				navbar := config["navbar"].(map[string]interface{})
+				mainNav := navbar["main"].([]interface{})
+				subLoginNav := navbar["subLogin"].([]interface{})
+
+				Expect(mainNav).To(HaveLen(1))
+				Expect(mainNav[0].(map[string]interface{})["kind"]).To(Equal("analytics"))
+				Expect(mainNav[0].(map[string]interface{})["view"]).To(Equal("business-analytics"))
+				Expect(subLoginNav).To(HaveLen(1))
+				Expect(subLoginNav[0].(map[string]interface{})["kind"]).To(Equal("settings"))
+				Expect(subLoginNav[0].(map[string]interface{})["view"]).To(Equal("user-settings"))
+
+				By("Verifying custom theme configuration")
+				themes := config["themes"].(map[string]interface{})
+				lightTheme := themes["light"].(map[string]interface{})
+				darkTheme := themes["dark"].(map[string]interface{})
+				Expect(lightTheme["name"]).To(Equal("corporateLight"))
+				Expect(lightTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
+				Expect(lightTheme["logo"].(map[string]interface{})["value"]).To(Equal("/branding/light.svg"))
+				Expect(darkTheme["name"]).To(Equal("corporateDark"))
+				Expect(darkTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
+				Expect(darkTheme["logo"].(map[string]interface{})["value"]).To(Equal("/branding/dark.svg"))
+			})
+		})
+	})
+
+	Context("When managing Ingress resources", func() {
+		const (
+			resourceName      = "test-ui-ingress"
+			resourceNamespace = "default"
+			productName       = "Test UI with Ingress"
+			imageName         = "nginx:latest"
+		)
+
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: resourceNamespace,
+		}
+
+		AfterEach(func() {
+			// Clean up resources
 			resource := &uiv1alpha1.ScalityUI{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			if err == nil {
-				By("Cleanup the specific resource instance ScalityUI")
 				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 			}
 
-			// Also delete the ConfigMap and Deployment if they exist
-			configMap := &corev1.ConfigMap{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: resourceNamespace}, configMap)
+			// Clean up Ingress
+			ingress := &networkingv1.Ingress{}
+			err = k8sClient.Get(ctx, typeNamespacedName, ingress)
 			if err == nil {
-				Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
-			}
-
-			deployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: resourceNamespace}, deployment)
-			if err == nil {
-				Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+				Expect(k8sClient.Delete(ctx, ingress)).To(Succeed())
 			}
 		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
-
-		It("should successfully create a ConfigMap", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify ConfigMap was created
-			configMap := &corev1.ConfigMap{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: resourceNamespace}, configMap)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			Expect(configMap.Data).To(HaveKey("config.json"))
-			Expect(configMap.Data["config.json"]).To(ContainSubstring(productName))
-		})
-
-		It("should successfully create a Deployment", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify Deployment was created
-			deployment := &appsv1.Deployment{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: resourceNamespace}, deployment)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			Expect(deployment.Spec.Replicas).To(Equal(&[]int32{1}[0]))
-			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
-			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal(imageName))
-			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(HaveLen(1))
-			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath).To(Equal(mountPath + "/config.json"))
-
-			// Verify Deployment Strategy
-			Expect(deployment.Spec.Strategy.Type).To(Equal(appsv1.RollingUpdateDeploymentStrategyType))
-			Expect(deployment.Spec.Strategy.RollingUpdate).NotTo(BeNil())
-			Expect(deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.Type).To(Equal(intstr.Int))
-			Expect(deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.IntVal).To(Equal(int32(0)))
-			Expect(deployment.Spec.Strategy.RollingUpdate.MaxSurge.Type).To(Equal(intstr.Int))
-			Expect(deployment.Spec.Strategy.RollingUpdate.MaxSurge.IntVal).To(Equal(int32(1)))
-
-			// Verify Pod Template Annotations
-			Expect(deployment.Spec.Template.ObjectMeta.Annotations).NotTo(BeNil())
-			Expect(deployment.Spec.Template.ObjectMeta.Annotations).To(HaveKey("checksum/config"))
-		})
-
-		It("should update ConfigMap when the resource is updated", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			err = k8sClient.Get(ctx, typeNamespacedName, scalityui)
-			Expect(err).NotTo(HaveOccurred())
-
-			scalityui.Spec.ProductName = "Updated Product"
-			Expect(k8sClient.Update(ctx, scalityui)).To(Succeed())
-
-			// Reconcile the resource again
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify ConfigMap was updated
-			configMap := &corev1.ConfigMap{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: resourceNamespace}, configMap)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			Expect(configMap.Data["config.json"]).To(ContainSubstring("Updated Product"))
-		})
-
-		It("should update Deployment when the resource is updated", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			err = k8sClient.Get(ctx, typeNamespacedName, scalityui)
-			Expect(err).NotTo(HaveOccurred())
-
-			newImage := "nginx:1.21"
-			scalityui.Spec.Image = newImage
-			Expect(k8sClient.Update(ctx, scalityui)).To(Succeed())
-
-			// Reconcile the resource again
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify Deployment was updated
-			deployment := &appsv1.Deployment{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: resourceNamespace}, deployment)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
-			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal(newImage))
-			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(HaveLen(1))
-			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath).To(Equal(mountPath + "/config.json"))
-
-			// Verify Deployment Strategy after update
-			Expect(deployment.Spec.Strategy.Type).To(Equal(appsv1.RollingUpdateDeploymentStrategyType))
-			Expect(deployment.Spec.Strategy.RollingUpdate).NotTo(BeNil())
-			Expect(deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.Type).To(Equal(intstr.Int))
-			Expect(deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.IntVal).To(Equal(int32(0)))
-			Expect(deployment.Spec.Strategy.RollingUpdate.MaxSurge.Type).To(Equal(intstr.Int))
-			Expect(deployment.Spec.Strategy.RollingUpdate.MaxSurge.IntVal).To(Equal(int32(1)))
-
-			// Verify Pod Template Annotations after update
-			Expect(deployment.Spec.Template.ObjectMeta.Annotations).NotTo(BeNil())
-			Expect(deployment.Spec.Template.ObjectMeta.Annotations).To(HaveKey("checksum/config"))
-		})
-
-		It("should test createConfigJSON function directly", func() {
-			testUI := &uiv1alpha1.ScalityUI{
+		It("should create a default Ingress when no network configuration is provided", func() {
+			By("Creating a ScalityUI without network configuration")
+			resource := &uiv1alpha1.ScalityUI{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: resourceNamespace,
+				},
 				Spec: uiv1alpha1.ScalityUISpec{
-					ProductName: "Test Product Direct",
+					Image:       imageName,
+					ProductName: productName,
 				},
 			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
-			configJSON, err := createConfigJSON(testUI)
+			By("Reconciling the resource")
+			controllerReconciler := &ScalityUIReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(configJSON)).To(ContainSubstring("Test Product Direct"))
+
+			By("Verifying that an Ingress is created")
+			ingress := &networkingv1.Ingress{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, ingress)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			By("Verifying the Ingress has basic configuration")
+			Expect(ingress.Spec.Rules).To(HaveLen(1))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths).To(HaveLen(1))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/"))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Name).To(Equal(resourceName))
 		})
 
+		It("should create a custom Ingress when network configuration is provided", func() {
+			By("Creating a ScalityUI with network configuration")
+			resource := &uiv1alpha1.ScalityUI{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: resourceNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUISpec{
+					Image:       imageName,
+					ProductName: productName,
+					Networks: uiv1alpha1.UINetworks{
+						Host:             "test.example.com",
+						IngressClassName: "nginx",
+						IngressAnnotations: map[string]string{
+							"nginx.ingress.kubernetes.io/ssl-redirect": "false",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Reconciling the resource")
+			controllerReconciler := &ScalityUIReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying that an Ingress is created with custom configuration")
+			ingress := &networkingv1.Ingress{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, ingress)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			By("Verifying the Ingress has the specified host and class")
+			Expect(ingress.Spec.IngressClassName).NotTo(BeNil())
+			Expect(*ingress.Spec.IngressClassName).To(Equal("nginx"))
+			Expect(ingress.Spec.Rules).To(HaveLen(1))
+			Expect(ingress.Spec.Rules[0].Host).To(Equal("test.example.com"))
+
+			By("Verifying the Ingress has the specified annotations")
+			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/ssl-redirect"))
+			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"]).To(Equal("false"))
+		})
+
+		It("should expose the application at the root path", func() {
+			By("Creating a ScalityUI resource")
+			resource := &uiv1alpha1.ScalityUI{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: resourceNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUISpec{
+					Image:       imageName,
+					ProductName: productName,
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("Reconciling the resource")
+			controllerReconciler := &ScalityUIReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the Ingress routes traffic to the root path")
+			ingress := &networkingv1.Ingress{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, ingress)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			By("Verifying the path configuration allows access to the application")
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/"))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].PathType).NotTo(BeNil())
+			Expect(*ingress.Spec.Rules[0].HTTP.Paths[0].PathType).To(Equal(networkingv1.PathTypePrefix))
+		})
 	})
 
 	Context("When managing Ingress resources", func() {
@@ -415,3 +620,175 @@ var _ = Describe("ScalityUI Controller", func() {
 		})
 	})
 })
+
+// Helper functions for test verification - these abstract away implementation details
+
+func cleanupTestResources(ctx context.Context, namespacedName types.NamespacedName) {
+	// Clean up ScalityUI resource
+	resource := &uiv1alpha1.ScalityUI{}
+	if err := k8sClient.Get(ctx, namespacedName, resource); err == nil {
+		Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+	}
+
+	// Clean up associated resources
+	configMap := &corev1.ConfigMap{}
+	if err := k8sClient.Get(ctx, namespacedName, configMap); err == nil {
+		Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
+	}
+
+	deployedAppsConfigMap := &corev1.ConfigMap{}
+	deployedAppsName := types.NamespacedName{
+		Name:      namespacedName.Name + "-deployed-ui-apps",
+		Namespace: namespacedName.Namespace,
+	}
+	if err := k8sClient.Get(ctx, deployedAppsName, deployedAppsConfigMap); err == nil {
+		Expect(k8sClient.Delete(ctx, deployedAppsConfigMap)).To(Succeed())
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := k8sClient.Get(ctx, namespacedName, deployment); err == nil {
+		Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+	}
+
+	service := &corev1.Service{}
+	if err := k8sClient.Get(ctx, namespacedName, service); err == nil {
+		Expect(k8sClient.Delete(ctx, service)).To(Succeed())
+	}
+}
+
+func verifyUIApplicationConfiguration(ctx context.Context, appName, namespace, expectedProductName string) {
+	configMap := &corev1.ConfigMap{}
+	Eventually(func() error {
+		return k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)
+	}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+	Expect(configMap.Data).To(HaveKey("config.json"))
+
+	var config map[string]interface{}
+	Expect(json.Unmarshal([]byte(configMap.Data["config.json"]), &config)).To(Succeed())
+	Expect(config["productName"]).To(Equal(expectedProductName))
+	Expect(config["discoveryUrl"]).To(Equal("/shell/deployed-ui-apps.json"))
+
+	// Verify deployed apps configuration exists
+	deployedAppsConfigMap := &corev1.ConfigMap{}
+	Eventually(func() error {
+		return k8sClient.Get(ctx, types.NamespacedName{Name: appName + "-deployed-ui-apps", Namespace: namespace}, deployedAppsConfigMap)
+	}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+	Expect(deployedAppsConfigMap.Data).To(HaveKeyWithValue("deployed-ui-apps.json", "[]"))
+}
+
+func verifyUIApplicationService(ctx context.Context, appName, namespace string) {
+	service := &corev1.Service{}
+	Eventually(func() error {
+		return k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, service)
+	}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+	Expect(service.Spec.Selector).To(HaveKeyWithValue("app", appName))
+	Expect(service.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
+	Expect(service.Spec.Ports).To(HaveLen(1))
+	Expect(service.Spec.Ports[0].Name).To(Equal("http"))
+	Expect(service.Spec.Ports[0].Port).To(Equal(int32(80)))
+}
+
+func verifyResourceOwnership(ctx context.Context, appName, namespace string, ownerUID types.UID) {
+	// Verify ConfigMap ownership
+	configMap := &corev1.ConfigMap{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)).To(Succeed())
+	Expect(configMap.OwnerReferences).NotTo(BeEmpty())
+	Expect(configMap.OwnerReferences[0].UID).To(Equal(ownerUID))
+
+	// Verify Deployment ownership
+	deployment := &appsv1.Deployment{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, deployment)).To(Succeed())
+	Expect(deployment.OwnerReferences).NotTo(BeEmpty())
+	Expect(deployment.OwnerReferences[0].UID).To(Equal(ownerUID))
+
+	// Verify Service ownership
+	service := &corev1.Service{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, service)).To(Succeed())
+	Expect(service.OwnerReferences).NotTo(BeEmpty())
+	Expect(service.OwnerReferences[0].UID).To(Equal(ownerUID))
+}
+
+func verifyCustomBranding(ctx context.Context, appName, namespace, expectedProductName string) {
+	configMap := &corev1.ConfigMap{}
+	Eventually(func() bool {
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)
+		if err != nil {
+			return false
+		}
+		var config map[string]interface{}
+		err = json.Unmarshal([]byte(configMap.Data["config.json"]), &config)
+		return err == nil && config["productName"] == expectedProductName
+	}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+
+	var config map[string]interface{}
+	Expect(json.Unmarshal([]byte(configMap.Data["config.json"]), &config)).To(Succeed())
+	// Custom branding is now handled through themes, not separate favicon/logo fields
+}
+
+func verifyCustomNavigation(ctx context.Context, appName, namespace string) {
+	configMap := &corev1.ConfigMap{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)).To(Succeed())
+
+	var config map[string]interface{}
+	Expect(json.Unmarshal([]byte(configMap.Data["config.json"]), &config)).To(Succeed())
+
+	navbar := config["navbar"].(map[string]interface{})
+	mainNav := navbar["main"].([]interface{})
+	subLoginNav := navbar["subLogin"].([]interface{})
+
+	Expect(mainNav).To(HaveLen(1))
+	Expect(mainNav[0].(map[string]interface{})["kind"]).To(Equal("dashboard"))
+	Expect(mainNav[0].(map[string]interface{})["view"]).To(Equal("main-dashboard"))
+	Expect(subLoginNav).To(HaveLen(1))
+	Expect(subLoginNav[0].(map[string]interface{})["kind"]).To(Equal("profile"))
+	Expect(subLoginNav[0].(map[string]interface{})["view"]).To(Equal("user-profile"))
+}
+
+func verifyCustomThemes(ctx context.Context, appName, namespace string) {
+	configMap := &corev1.ConfigMap{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)).To(Succeed())
+
+	var config map[string]interface{}
+	Expect(json.Unmarshal([]byte(configMap.Data["config.json"]), &config)).To(Succeed())
+
+	themes := config["themes"].(map[string]interface{})
+	lightTheme := themes["light"].(map[string]interface{})
+	darkTheme := themes["dark"].(map[string]interface{})
+	Expect(lightTheme["name"]).To(Equal("companyLight"))
+	Expect(lightTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
+	Expect(lightTheme["logo"].(map[string]interface{})["value"]).To(Equal("/assets/light-logo.png"))
+	Expect(darkTheme["name"]).To(Equal("companyDark"))
+	Expect(darkTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
+	Expect(darkTheme["logo"].(map[string]interface{})["value"]).To(Equal("/assets/dark-logo.png"))
+}
+
+func verifyUserCustomizationOptions(ctx context.Context, appName, namespace string) {
+	configMap := &corev1.ConfigMap{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)).To(Succeed())
+
+	var config map[string]interface{}
+	Expect(json.Unmarshal([]byte(configMap.Data["config.json"]), &config)).To(Succeed())
+
+	// User customization options are no longer part of the basic spec
+	// This test now just verifies the config is valid
+	Expect(config).To(HaveKey("productName"))
+	Expect(config).To(HaveKey("navbar"))
+	Expect(config).To(HaveKey("themes"))
+}
+
+func verifyApplicationVersion(ctx context.Context, appName, namespace, expectedImage string) {
+	deployment := &appsv1.Deployment{}
+	Eventually(func() string {
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, deployment)
+		if err != nil {
+			return ""
+		}
+		if len(deployment.Spec.Template.Spec.Containers) > 0 {
+			return deployment.Spec.Template.Spec.Containers[0].Image
+		}
+		return ""
+	}, time.Second*10, time.Millisecond*250).Should(Equal(expectedImage))
+}

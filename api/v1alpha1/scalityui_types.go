@@ -28,11 +28,89 @@ import (
 type ScalityUISpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-
 	Image       string     `json:"image"`
 	ProductName string     `json:"productName"`
-	MountPath   string     `json:"mountPath,omitempty"`
+	Themes      Themes     `json:"themes,omitempty"`
+	Navbar      Navbar     `json:"navbar,omitempty"`
 	Networks    UINetworks `json:"networks,omitempty"`
+}
+
+// Themes defines the various themes supported by the UI.
+type Themes struct {
+	// Light is the light theme configuration for the UI.
+	Light Theme `json:"light"`
+	// Dark is the dark theme configuration for the UI.
+	Dark Theme `json:"dark"`
+}
+
+// Theme defines a theme supported by the UI.
+type Theme struct {
+	// Type specifies the theme's category or system (e.g., 'core-ui').
+	Type string `json:"type"`
+	// Name is the unique identifier for the theme.
+	Name string `json:"name"`
+	// Logo contains the logo configuration for this theme.
+	Logo Logo `json:"logo"`
+}
+
+// Logo defines the logo configuration with support for different formats.
+type Logo struct {
+	// Type specifies the logo type: "path", "base64", or "svg".
+	Type string `json:"type"`
+	// Value contains the logo data based on the type:
+	// - For "path": file path to the logo image
+	// - For "base64": base64-encoded image data
+	// - For "svg": inline SVG content
+	Value string `json:"value"`
+	// MimeType specifies the MIME type when using base64 (e.g., "image/png", "image/jpeg").
+	// Optional for "path" and "svg" types.
+	MimeType string `json:"mimeType,omitempty"`
+}
+
+// Navbar configures the UI navbar.
+type Navbar struct {
+	// Main contains configuration for the main navigation items in the navbar.
+	Main []NavbarItem `json:"main,omitempty"`
+	// SubLogin contains configuration for navigation items displayed in the sub-login area.
+	SubLogin []NavbarItem `json:"subLogin,omitempty"`
+}
+
+// NavbarItem defines an item in the navbar that can be either internal or external.
+type NavbarItem struct {
+	// Internal contains configuration for internal navigation items.
+	// Only one of Internal or External should be specified.
+	Internal *InternalNavbarItem `json:"internal,omitempty"`
+	// External contains configuration for external navigation items.
+	// Only one of Internal or External should be specified.
+	External *ExternalNavbarItem `json:"external,omitempty"`
+}
+
+// InternalNavbarItem defines an internal navigation item that links to views within the application.
+type InternalNavbarItem struct {
+	// Kind specifies the type of navbar item.
+	Kind string `json:"kind"`
+	// View identifies the associated view for this navbar item.
+	View string `json:"view"`
+	// Groups contains a list of user groups that can see this navbar item.
+	// If empty, the item is visible to all users.
+	Groups []string `json:"groups,omitempty"`
+	// Icon is the name or path of the icon to display for this navbar item.
+	Icon string `json:"icon,omitempty"`
+	// Label contains localized text for the navbar item, keyed by language code.
+	Label map[string]string `json:"label,omitempty"`
+}
+
+// ExternalNavbarItem defines an external navigation item that links to external resources.
+type ExternalNavbarItem struct {
+	// URL specifies the link destination for the external resource.
+	URL string `json:"url"`
+	// Groups contains a list of user groups that can see this navbar item.
+	// If empty, the item is visible to all users.
+	Groups []string `json:"groups,omitempty"`
+	// Icon is the name or path of the icon to display for this navbar item.
+	Icon string `json:"icon,omitempty"`
+	// Label contains localized text for the navbar item, keyed by language code.
+	Label map[string]string `json:"label,omitempty"`
 }
 
 // UINetworks configures network parameters for the UI.
