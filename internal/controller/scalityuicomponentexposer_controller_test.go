@@ -23,6 +23,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,6 +82,43 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, component)).To(Succeed())
+
+			// Create test deployment for the component
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      componentName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: int32Ptr(1),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": componentName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": componentName,
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "main",
+									Image: "scality/component:latest",
+									Ports: []corev1.ContainerPort{
+										{
+											ContainerPort: 80,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
 		})
 
 		AfterEach(func() {
@@ -96,6 +134,17 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			component := &uiv1alpha1.ScalityUIComponent{}
 			_ = k8sClient.Get(ctx, types.NamespacedName{Name: componentName, Namespace: testNamespace}, component)
 			_ = k8sClient.Delete(ctx, component)
+
+			// Clean up any test deployments
+			deployment := &appsv1.Deployment{}
+			_ = k8sClient.Get(ctx, types.NamespacedName{Name: componentName, Namespace: testNamespace}, deployment)
+			_ = k8sClient.Delete(ctx, deployment)
+
+			// Clean up any test configmaps
+			configMap := &corev1.ConfigMap{}
+			configMapName := componentName + "-runtime-app-configuration"
+			_ = k8sClient.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: testNamespace}, configMap)
+			_ = k8sClient.Delete(ctx, configMap)
 		})
 
 		It("should successfully reconcile the resource with default configuration", func() {
@@ -509,5 +558,566 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(result.Requeue).To(BeFalse())
 			Expect(result.RequeueAfter).To(BeZero())
 		})
+
+		It("should calculate ConfigMap hash correctly", func() {
+			By("Creating the custom resource")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: componentName,
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap hash calculation")
+			configMap := &corev1.ConfigMap{}
+			configMapName := componentName + "-runtime-app-configuration"
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: testNamespace,
+				}, configMap)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			// Test hash calculation
+			hash, err := controllerReconciler.calculateConfigMapHash(configMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hash).NotTo(BeEmpty())
+			Expect(len(hash)).To(Equal(64)) // SHA-256 hex string length
+
+			// Verify hash is deterministic
+			hash2, err := controllerReconciler.calculateConfigMapHash(configMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hash).To(Equal(hash2))
+		})
+
+		It("should update deployment with ConfigMap volume mount", func() {
+			deploymentName := componentName + "-deploy-test"
+			By("Creating a test deployment")
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: int32Ptr(1),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": deploymentName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": deploymentName,
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "test-container",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			// Create a component that references this deployment
+			testComponent := &uiv1alpha1.ScalityUIComponent{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponent",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image: "scality/component:latest",
+				},
+			}
+			Expect(k8sClient.Create(ctx, testComponent)).To(Succeed())
+
+			By("Creating the custom resource")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName + "-deploy",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: deploymentName,
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposerName + "-deploy",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying deployment was updated with ConfigMap volume")
+			updatedDeployment := &appsv1.Deployment{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				}, updatedDeployment)
+				if err != nil {
+					return false
+				}
+
+				// Check if ConfigMap volume was added
+				expectedVolumeName := volumeNamePrefix + deploymentName
+				for _, volume := range updatedDeployment.Spec.Template.Spec.Volumes {
+					if volume.Name == expectedVolumeName {
+						return volume.ConfigMap != nil &&
+							volume.ConfigMap.Name == deploymentName+"-runtime-app-configuration"
+					}
+				}
+				return false
+			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+
+			By("Verifying container has ConfigMap volume mount")
+			Expect(updatedDeployment.Spec.Template.Spec.Containers).To(HaveLen(1))
+			container := updatedDeployment.Spec.Template.Spec.Containers[0]
+
+			expectedVolumeName := volumeNamePrefix + deploymentName
+			var foundMount *corev1.VolumeMount
+			for i, mount := range container.VolumeMounts {
+				if mount.Name == expectedVolumeName {
+					foundMount = &container.VolumeMounts[i]
+					break
+				}
+			}
+
+			Expect(foundMount).NotTo(BeNil())
+			Expect(foundMount.MountPath).To(Equal(mountPath))
+			Expect(foundMount.SubPath).To(Equal(configMapKey))
+			Expect(foundMount.ReadOnly).To(BeTrue())
+
+			By("Verifying config hash annotation was added")
+			Expect(updatedDeployment.Spec.Template.Annotations).To(HaveKey(configHashAnnotation))
+
+			By("Cleaning up test resources")
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, testComponent)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, exposer)).To(Succeed())
+		})
+
+		It("should trigger pod restart when ConfigMap content changes", func() {
+			deploymentName := componentName + "-restart-test"
+			By("Creating a test deployment")
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: int32Ptr(1),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": deploymentName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": deploymentName,
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "test-container",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			// Create a component that references this deployment
+			testComponent := &uiv1alpha1.ScalityUIComponent{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponent",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image: "scality/component:latest",
+				},
+			}
+			Expect(k8sClient.Create(ctx, testComponent)).To(Succeed())
+
+			By("Creating the custom resource")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName + "-restart",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: deploymentName,
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposerName + "-restart",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Getting initial hash annotation")
+			updatedDeployment := &appsv1.Deployment{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				}, updatedDeployment)
+				return err == nil && updatedDeployment.Spec.Template.Annotations[configHashAnnotation] != ""
+			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+
+			initialHash := updatedDeployment.Spec.Template.Annotations[configHashAnnotation]
+
+			By("Updating the exposer configuration")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      exposerName + "-restart",
+				Namespace: testNamespace,
+			}, updatedExposer)).To(Succeed())
+
+			updatedExposer.Spec.Auth = &uiv1alpha1.AuthConfig{
+				Kind:        "OIDC",
+				ProviderURL: "https://changed-auth.example.com",
+				ClientID:    "changed-client",
+			}
+			Expect(k8sClient.Update(ctx, updatedExposer)).To(Succeed())
+
+			By("Reconciling the updated resource")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposerName + "-restart",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying hash annotation changed to trigger pod restart")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				}, updatedDeployment)
+				if err != nil {
+					return false
+				}
+
+				newHash := updatedDeployment.Spec.Template.Annotations[configHashAnnotation]
+				return newHash != "" && newHash != initialHash
+			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+
+			By("Cleaning up test resources")
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, testComponent)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, exposer)).To(Succeed())
+		})
+
+		It("should handle deployment not found gracefully", func() {
+			By("Creating the custom resource without corresponding deployment")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: componentName,
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying deployment ready condition is still true")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedExposer)).To(Succeed())
+
+			deploymentCondition := meta.FindStatusCondition(updatedExposer.Status.Conditions, "DeploymentReady")
+			Expect(deploymentCondition).NotTo(BeNil())
+			Expect(deploymentCondition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(deploymentCondition.Reason).To(Equal("ReconcileSucceeded"))
+		})
+
+		It("should add management annotations to ConfigMap", func() {
+			By("Creating the custom resource")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: componentName,
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap has management annotations")
+			configMap := &corev1.ConfigMap{}
+			configMapName := componentName + "-runtime-app-configuration"
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: testNamespace,
+				}, configMap)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			Expect(configMap.Annotations).To(HaveKey("ui.scality.com/managed-by"))
+			Expect(configMap.Annotations["ui.scality.com/managed-by"]).To(Equal("scalityuicomponentexposer-controller"))
+			Expect(configMap.Annotations).To(HaveKey("ui.scality.com/last-updated"))
+			Expect(configMap.Annotations["ui.scality.com/last-updated"]).NotTo(BeEmpty())
+		})
+
+		It("should preserve existing volumes and mounts when adding ConfigMap mount", func() {
+			deploymentName := componentName + "-preserve-test"
+			By("Creating a test deployment with existing volumes")
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: int32Ptr(1),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": deploymentName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": deploymentName,
+							},
+						},
+						Spec: corev1.PodSpec{
+							Volumes: []corev1.Volume{
+								{
+									Name: "existing-volume",
+									VolumeSource: corev1.VolumeSource{
+										EmptyDir: &corev1.EmptyDirVolumeSource{},
+									},
+								},
+							},
+							Containers: []corev1.Container{
+								{
+									Name:  "test-container",
+									Image: "nginx:latest",
+									VolumeMounts: []corev1.VolumeMount{
+										{
+											Name:      "existing-volume",
+											MountPath: "/existing",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			// Create a component that references this deployment
+			testComponent := &uiv1alpha1.ScalityUIComponent{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponent",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image: "scality/component:latest",
+				},
+			}
+			Expect(k8sClient.Create(ctx, testComponent)).To(Succeed())
+
+			By("Creating the custom resource")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName + "-preserve",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: deploymentName,
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposerName + "-preserve",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying existing volumes and mounts are preserved")
+			updatedDeployment := &appsv1.Deployment{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				}, updatedDeployment)
+				return err == nil && len(updatedDeployment.Spec.Template.Spec.Volumes) >= 2
+			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+
+			// Check existing volume is preserved
+			var existingVolumeFound bool
+			var configVolumeFound bool
+			expectedConfigVolumeName := volumeNamePrefix + deploymentName
+
+			for _, volume := range updatedDeployment.Spec.Template.Spec.Volumes {
+				if volume.Name == "existing-volume" {
+					existingVolumeFound = true
+					Expect(volume.EmptyDir).NotTo(BeNil())
+				}
+				if volume.Name == expectedConfigVolumeName {
+					configVolumeFound = true
+					Expect(volume.ConfigMap).NotTo(BeNil())
+				}
+			}
+
+			Expect(existingVolumeFound).To(BeTrue())
+			Expect(configVolumeFound).To(BeTrue())
+
+			// Check existing mount is preserved and new mount is added
+			container := updatedDeployment.Spec.Template.Spec.Containers[0]
+			var existingMountFound bool
+			var configMountFound bool
+
+			for _, mount := range container.VolumeMounts {
+				if mount.Name == "existing-volume" {
+					existingMountFound = true
+					Expect(mount.MountPath).To(Equal("/existing"))
+				}
+				if mount.Name == expectedConfigVolumeName {
+					configMountFound = true
+					Expect(mount.MountPath).To(Equal(mountPath))
+				}
+			}
+
+			Expect(existingMountFound).To(BeTrue())
+			Expect(configMountFound).To(BeTrue())
+
+			By("Cleaning up test resources")
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, testComponent)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, exposer)).To(Succeed())
+		})
 	})
 })
+
+// Helper function to create int32 pointer
+func int32Ptr(i int32) *int32 {
+	return &i
+}

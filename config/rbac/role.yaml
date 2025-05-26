@@ -17,6 +17,16 @@ rules:
   - update
   - watch
 - apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - ui.scality.com
   resources:
   - scalityuicomponentexposers
