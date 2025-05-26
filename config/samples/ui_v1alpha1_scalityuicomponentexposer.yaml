@@ -1,9 +1,17 @@
 apiVersion: ui.scality.com/v1alpha1
 kind: ScalityUIComponentExposer
 metadata:
-  labels:
-    app.kubernetes.io/name: ui-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: scalityuicomponentexposer-sample
+  name: dummy-ui-exposer
+  namespace: ui
 spec:
-  # TODO(user): Add fields here
+  scalityUI: "scality-ui"
+  scalityUIComponent: "dummy-ui"
+  appHistoryPath: "/"
+  auth:
+    kind: "OIDC"
+    providerUrl: "https://auth.example.com"
+    redirectUrl: "/dashboard"
+    clientId: "my-client-id"
+    responseType: "code"
+    scopes: "openid email profile groups"
+    providerLogout: true
