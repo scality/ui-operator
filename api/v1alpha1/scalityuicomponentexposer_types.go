@@ -27,14 +27,66 @@ import (
 type ScalityUIComponentExposerSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	ScalityUI          string `json:"scality-ui"`
-	ScalityUIComponent string `json:"scality-ui-component"`
+
+	// ScalityUI references the ScalityUI resource name
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ScalityUI string `json:"scalityUI"`
+
+	// ScalityUIComponent references the ScalityUIComponent resource name
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ScalityUIComponent string `json:"scalityUIComponent"`
+
+	// AppHistoryPath specifies the path to the app history
+	// +kubebuilder:validation:Required
+	AppHistoryPath string `json:"appHistoryPath"`
+
+	// Auth contains authentication configuration for the exposed component
+	// +kubebuilder:validation:Optional
+	Auth *AuthConfig `json:"auth,omitempty"`
+}
+
+// AuthConfig defines authentication configuration
+type AuthConfig struct {
+	// Kind specifies the authentication type (e.g., "OIDC")
+	// +kubebuilder:validation:Enum=OIDC;Basic;None
+	// +kubebuilder:default="OIDC"
+	Kind string `json:"kind,omitempty"`
+
+	// ProviderURL is the OIDC provider URL
+	ProviderURL string `json:"providerUrl,omitempty"`
+
+	// RedirectURL is the redirect URL after authentication
+	// +kubebuilder:default="/"
+	RedirectURL string `json:"redirectUrl,omitempty"`
+
+	// ClientID is the OIDC client ID
+	ClientID string `json:"clientId,omitempty"`
+
+	// ResponseType specifies the OIDC response type
+	// +kubebuilder:default="code"
+	ResponseType string `json:"responseType,omitempty"`
+
+	// Scopes specifies the OIDC scopes
+	// +kubebuilder:default="openid email profile"
+	Scopes string `json:"scopes,omitempty"`
+
+	// ProviderLogout enables provider logout
+	// +kubebuilder:default=true
+	ProviderLogout *bool `json:"providerLogout,omitempty"`
 }
 
 // ScalityUIComponentExposerStatus defines the observed state of ScalityUIComponentExposer
 type ScalityUIComponentExposerStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	// ConfigMapName represents the name of the created ConfigMap
+	RuntimeAppConfigurationConfigMapName string `json:"runtimeAppConfigurationConfigMapName,omitempty"`
+
+	// Conditions represent the latest available observations of the exposer's state
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
