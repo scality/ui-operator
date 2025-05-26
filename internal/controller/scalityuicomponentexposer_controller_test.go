@@ -112,7 +112,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
 					ScalityUI:          uiName,
 					ScalityUIComponent: componentName,
-					AppHistoryPath:     "/test-app",
+					AppHistoryBasePath: "/test-app",
 				},
 			}
 			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
@@ -184,7 +184,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
 					ScalityUI:          uiName,
 					ScalityUIComponent: componentName,
-					AppHistoryPath:     "/test-app",
+					AppHistoryBasePath: "/test-app",
 					Auth: &uiv1alpha1.AuthConfig{
 						Kind:        "OIDC",
 						ProviderURL: "https://auth.example.com",
@@ -241,7 +241,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
 					ScalityUI:          "non-existent-ui",
 					ScalityUIComponent: componentName,
-					AppHistoryPath:     "/test-app",
+					AppHistoryBasePath: "/test-app",
 				},
 			}
 			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
@@ -282,7 +282,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
 					ScalityUI:          uiName,
 					ScalityUIComponent: "non-existent-component",
-					AppHistoryPath:     "/test-app",
+					AppHistoryBasePath: "/test-app",
 				},
 			}
 			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
@@ -325,7 +325,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
 					ScalityUI:          uiName,
 					ScalityUIComponent: componentName,
-					AppHistoryPath:     "/test-app",
+					AppHistoryBasePath: "/test-app",
 					Auth: &uiv1alpha1.AuthConfig{
 						ProviderURL:    "https://auth.example.com",
 						ClientID:       "test-client",
@@ -386,7 +386,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
 					ScalityUI:          uiName,
 					ScalityUIComponent: componentName,
-					AppHistoryPath:     "/test-app",
+					AppHistoryBasePath: "/test-app",
 				},
 			}
 			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
@@ -457,7 +457,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
 					ScalityUI:          uiName,
 					ScalityUIComponent: componentName,
-					AppHistoryPath:     "/test-app",
+					AppHistoryBasePath: "/test-app",
 				},
 			}
 			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())

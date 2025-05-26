@@ -40,7 +40,7 @@ type ScalityUIComponentExposerSpec struct {
 
 	// AppHistoryPath specifies the path to the app history
 	// +kubebuilder:validation:Required
-	AppHistoryPath string `json:"appHistoryPath"`
+	AppHistoryBasePath string `json:"appHistoryBasePath"`
 
 	// Auth contains authentication configuration for the exposed component
 	// +kubebuilder:validation:Optional

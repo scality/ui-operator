@@ -41,7 +41,7 @@ spec:
             description: ScalityUIComponentExposerSpec defines the desired state of
               ScalityUIComponentExposer
             properties:
-              appHistoryPath:
+              appHistoryBasePath:
                 description: AppHistoryPath specifies the path to the app history
                 type: string
               auth:
@@ -89,7 +89,7 @@ spec:
                 minLength: 1
                 type: string
             required:
-            - appHistoryPath
+            - appHistoryBasePath
             - scalityUI
             - scalityUIComponent
             type: object

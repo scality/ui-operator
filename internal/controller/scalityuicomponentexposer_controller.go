@@ -98,7 +98,7 @@ type MicroAppRuntimeConfigurationMetadata struct {
 type MicroAppRuntimeConfigurationSpec struct {
 	ScalityUI          string                 `json:"scalityUI"`
 	ScalityUIComponent string                 `json:"scalityUIComponent"`
-	Title              string                 `json:"title,omitempty"`
+	AppHistoryBasePath string                 `json:"appHistoryBasePath,omitempty"`
 	Auth               map[string]interface{} `json:"auth,omitempty"`
 }
 
@@ -337,6 +337,7 @@ func (r *ScalityUIComponentExposerReconciler) buildRuntimeConfiguration(
 		Spec: MicroAppRuntimeConfigurationSpec{
 			ScalityUI:          ui.Name,
 			ScalityUIComponent: component.Name,
+			AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
 			Auth:               r.buildAuthConfig(exposer.Spec.Auth),
 		},
 	}
