@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -459,7 +460,7 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(
 
 		// Update or add the ConfigMap volume mount for each container
 		for i := range deployment.Spec.Template.Spec.Containers {
-			configChanged = r.ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName, configMapKey) || configChanged
+			configChanged = r.ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName) || configChanged
 		}
 
 		// Set annotation to trigger rolling update if configuration changed or hash is different
@@ -467,7 +468,18 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(
 			deployment.Spec.Template.Annotations = make(map[string]string)
 		}
 
-		currentHash := deployment.Spec.Template.Annotations[configHashAnnotation]
+		// Update annotation if config changed or if hash is different
+		currentHashAnnotation := deployment.Spec.Template.Annotations[configHashAnnotation]
+
+		currentHash := ""
+		if currentHashAnnotation != "" {
+			if idx := strings.Index(currentHashAnnotation, "-"); idx > 0 {
+				currentHash = currentHashAnnotation[:idx]
+			} else {
+				currentHash = currentHashAnnotation
+			}
+		}
+
 		if configChanged || currentHash != configMapHash {
 			// Force a unique value by appending a timestamp to ensure pod restart
 			timestamp := time.Now().Format(time.RFC3339)
@@ -520,15 +532,18 @@ func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolume(deployment *
 
 // ensureConfigMapVolumeMount ensures the container has the specified volume mount
 // Returns true if the mount was added or modified
-func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolumeMount(container *corev1.Container, volumeName, subPath string) bool {
+func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolumeMount(container *corev1.Container, volumeName string) bool {
 	// Check for existing mount and update if needed
 	for i, mount := range container.VolumeMounts {
 		if mount.Name == volumeName {
-			if mount.MountPath != mountPath ||
-				mount.SubPath != subPath ||
-				!mount.ReadOnly {
+			// Check if mount configuration needs update
+			needsUpdate := mount.MountPath != mountPath ||
+				mount.SubPath != configMapKey ||
+				!mount.ReadOnly
+
+			if needsUpdate {
 				container.VolumeMounts[i].MountPath = mountPath
-				container.VolumeMounts[i].SubPath = subPath
+				container.VolumeMounts[i].SubPath = configMapKey
 				container.VolumeMounts[i].ReadOnly = true
 				return true
 			}
@@ -540,7 +555,7 @@ func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolumeMount(contain
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name:      volumeName,
 		MountPath: mountPath,
-		SubPath:   subPath,
+		SubPath:   configMapKey,
 		ReadOnly:  true,
 	})
 	return true
@@ -551,6 +566,5 @@ func (r *ScalityUIComponentExposerReconciler) SetupWithManager(mgr ctrl.Manager)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uiv1alpha1.ScalityUIComponentExposer{}).
 		Owns(&corev1.ConfigMap{}).
-		Owns(&appsv1.Deployment{}).
 		Complete(r)
 }

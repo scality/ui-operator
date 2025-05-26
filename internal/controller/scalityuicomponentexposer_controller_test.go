@@ -18,7 +18,10 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -1108,6 +1111,389 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 
 			Expect(existingMountFound).To(BeTrue())
 			Expect(configMountFound).To(BeTrue())
+
+			By("Cleaning up test resources")
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, testComponent)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, exposer)).To(Succeed())
+		})
+
+		It("should correctly handle annotation updates with hash comparison", func() {
+			deploymentName := componentName + "-annotation-test"
+			By("Creating a test deployment with existing annotation")
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: int32Ptr(1),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": deploymentName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": deploymentName,
+							},
+							Annotations: map[string]string{
+								configHashAnnotation: "old-hash-2023-01-01T00:00:00Z",
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "test-container",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			// Create a component that references this deployment
+			testComponent := &uiv1alpha1.ScalityUIComponent{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponent",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image: "scality/component:latest",
+				},
+			}
+			Expect(k8sClient.Create(ctx, testComponent)).To(Succeed())
+
+			By("Creating the custom resource")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName + "-annotation",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: deploymentName,
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposerName + "-annotation",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying annotation was updated with new hash")
+			updatedDeployment := &appsv1.Deployment{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				}, updatedDeployment)
+				if err != nil {
+					return false
+				}
+
+				newAnnotation := updatedDeployment.Spec.Template.Annotations[configHashAnnotation]
+				// Should be updated since the hash is different
+				return newAnnotation != "" && newAnnotation != "old-hash-2023-01-01T00:00:00Z"
+			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+
+			firstHash := updatedDeployment.Spec.Template.Annotations[configHashAnnotation]
+
+			By("Reconciling again without changes")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposerName + "-annotation",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying annotation remains the same when no changes")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      deploymentName,
+				Namespace: testNamespace,
+			}, updatedDeployment)).To(Succeed())
+
+			secondHash := updatedDeployment.Spec.Template.Annotations[configHashAnnotation]
+			// Should remain the same since no configuration changed
+			Expect(secondHash).To(Equal(firstHash))
+
+			By("Cleaning up test resources")
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, testComponent)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, exposer)).To(Succeed())
+		})
+
+		It("should handle deployment with no existing annotations", func() {
+			deploymentName := componentName + "-no-annotation-test"
+			By("Creating a test deployment without annotations")
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: int32Ptr(1),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": deploymentName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": deploymentName,
+							},
+							// No annotations
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "test-container",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			// Create a component that references this deployment
+			testComponent := &uiv1alpha1.ScalityUIComponent{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponent",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image: "scality/component:latest",
+				},
+			}
+			Expect(k8sClient.Create(ctx, testComponent)).To(Succeed())
+
+			By("Creating the custom resource")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName + "-no-annotation",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: deploymentName,
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposerName + "-no-annotation",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying annotation was added for first time")
+			updatedDeployment := &appsv1.Deployment{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				}, updatedDeployment)
+				if err != nil {
+					return false
+				}
+
+				annotation := updatedDeployment.Spec.Template.Annotations[configHashAnnotation]
+				return annotation != ""
+			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+
+			By("Verifying annotation format is correct (hash-timestamp)")
+			annotation := updatedDeployment.Spec.Template.Annotations[configHashAnnotation]
+			Expect(annotation).To(ContainSubstring("-"))
+
+			// Extract hash part (before first dash)
+			parts := strings.Split(annotation, "-")
+			Expect(len(parts)).To(BeNumerically(">=", 2))
+			hashPart := parts[0]
+			Expect(len(hashPart)).To(Equal(64)) // SHA-256 hex string length
+
+			By("Cleaning up test resources")
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, testComponent)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, exposer)).To(Succeed())
+		})
+
+		It("should correctly extract hash from annotation with timestamp", func() {
+			deploymentName := componentName + "-hash-extract-test"
+			By("Creating a test deployment with hash-timestamp annotation")
+			testHash := "abcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234"
+			testTimestamp := "2023-12-01T10:30:00Z"
+			existingAnnotation := testHash + "-" + testTimestamp
+
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: int32Ptr(1),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": deploymentName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": deploymentName,
+							},
+							Annotations: map[string]string{
+								configHashAnnotation: existingAnnotation,
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "test-container",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			// Create a component that references this deployment
+			testComponent := &uiv1alpha1.ScalityUIComponent{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponent",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image: "scality/component:latest",
+				},
+			}
+			Expect(k8sClient.Create(ctx, testComponent)).To(Succeed())
+
+			By("Creating the custom resource that should generate the same hash")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName + "-hash-extract",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: deploymentName,
+					AppHistoryBasePath: "/test-app",
+					// Use same config to generate same hash
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			By("First reconcile to create ConfigMap and get actual hash")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposerName + "-hash-extract",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Getting the actual hash from ConfigMap")
+			configMap := &corev1.ConfigMap{}
+			configMapName := deploymentName + "-runtime-app-configuration"
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: testNamespace,
+				}, configMap)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			// Calculate actual hash
+			actualConfigData := configMap.Data[configMapKey]
+			actualHash := fmt.Sprintf("%x", sha256.Sum256([]byte(actualConfigData)))
+
+			By("Updating deployment with the actual hash to test no-change scenario")
+			updatedDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      deploymentName,
+				Namespace: testNamespace,
+			}, updatedDeployment)).To(Succeed())
+
+			// Set annotation with actual hash + timestamp
+			updatedDeployment.Spec.Template.Annotations[configHashAnnotation] = actualHash + "-" + testTimestamp
+			Expect(k8sClient.Update(ctx, updatedDeployment)).To(Succeed())
+
+			By("Reconciling again - should not update annotation since hash matches")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposerName + "-hash-extract",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying annotation was not changed (hash extraction worked correctly)")
+			finalDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      deploymentName,
+				Namespace: testNamespace,
+			}, finalDeployment)).To(Succeed())
+
+			finalAnnotation := finalDeployment.Spec.Template.Annotations[configHashAnnotation]
+			// Should still contain the original timestamp since hash matched
+			Expect(finalAnnotation).To(ContainSubstring(testTimestamp))
 
 			By("Cleaning up test resources")
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
