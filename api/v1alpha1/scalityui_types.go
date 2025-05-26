@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -28,9 +29,22 @@ type ScalityUISpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	Image       string `json:"image"`
-	ProductName string `json:"productName"`
-	MountPath   string `json:"mountPath,omitempty"`
+	Image       string     `json:"image"`
+	ProductName string     `json:"productName"`
+	MountPath   string     `json:"mountPath,omitempty"`
+	Networks    UINetworks `json:"networks,omitempty"`
+}
+
+// UINetworks configures network parameters for the UI.
+type UINetworks struct {
+	// IngressClassName specifies which ingress controller should implement the resource.
+	IngressClassName string `json:"ingressClassName"`
+	// Host specifies the hostname for the UI ingress.
+	Host string `json:"host"`
+	// TLS configures the TLS settings for the ingress.
+	TLS []networkingv1.IngressTLS `json:"tls,omitempty"`
+	// IngressAnnotations provides custom annotations for the ingress resource.
+	IngressAnnotations map[string]string `json:"ingressAnnotations,omitempty"`
 }
 
 // ScalityUIStatus defines the observed state of ScalityUI
