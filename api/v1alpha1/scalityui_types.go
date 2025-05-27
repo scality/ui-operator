@@ -28,11 +28,12 @@ import (
 type ScalityUISpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Image       string     `json:"image"`
-	ProductName string     `json:"productName"`
-	Themes      Themes     `json:"themes,omitempty"`
-	Navbar      Navbar     `json:"navbar,omitempty"`
-	Networks    UINetworks `json:"networks,omitempty"`
+	Image       string      `json:"image"`
+	ProductName string      `json:"productName"`
+	Themes      Themes      `json:"themes,omitempty"`
+	Navbar      Navbar      `json:"navbar,omitempty"`
+	Networks    UINetworks  `json:"networks,omitempty"`
+	Auth        *AuthConfig `json:"auth,omitempty"`
 }
 
 // Themes defines the various themes supported by the UI.
@@ -125,6 +126,36 @@ type UINetworks struct {
 	IngressAnnotations map[string]string `json:"ingressAnnotations,omitempty"`
 }
 
+// AuthConfig defines authentication configuration
+type AuthConfig struct {
+	// Kind specifies the authentication type (e.g., "OIDC")
+	// +kubebuilder:validation:Enum=OIDC;Basic;None
+	// +kubebuilder:default="OIDC"
+	Kind string `json:"kind,omitempty"`
+
+	// ProviderURL is the OIDC provider URL
+	ProviderURL string `json:"providerUrl,omitempty"`
+
+	// RedirectURL is the redirect URL after authentication
+	// +kubebuilder:default="/"
+	RedirectURL string `json:"redirectUrl,omitempty"`
+
+	// ClientID is the OIDC client ID
+	ClientID string `json:"clientId,omitempty"`
+
+	// ResponseType specifies the OIDC response type
+	// +kubebuilder:default="code"
+	ResponseType string `json:"responseType,omitempty"`
+
+	// Scopes specifies the OIDC scopes
+	// +kubebuilder:default="openid email profile"
+	Scopes string `json:"scopes,omitempty"`
+
+	// ProviderLogout enables provider logout
+	// +kubebuilder:default=true
+	ProviderLogout *bool `json:"providerLogout,omitempty"`
+}
+
 // ScalityUIStatus defines the observed state of ScalityUI
 type ScalityUIStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
@@ -133,6 +164,7 @@ type ScalityUIStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster
 
 // ScalityUI is the Schema for the scalityuis API
 type ScalityUI struct {

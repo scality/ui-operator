@@ -39,7 +39,8 @@ import (
 )
 
 const (
-	uiServicePort = 80
+	uiServicePort    = 80
+	defaultNamespace = "scality-ui"
 )
 
 // createConfigJSON creates a JSON config from the ScalityUI object
@@ -388,7 +389,7 @@ func (r *ScalityUIReconciler) createOrUpdateService(ctx context.Context, scality
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      scalityui.Name,
-			Namespace: scalityui.Namespace,
+			Namespace: defaultNamespace,
 		},
 	}
 
@@ -508,7 +509,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      scalityui.Name,
-			Namespace: scalityui.Namespace,
+			Namespace: defaultNamespace,
 		},
 	}
 	configJsonData := map[string]string{"config.json": string(configJSON)}
@@ -527,7 +528,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	configMapDeployedApps := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      configMapDeployedAppsName,
-			Namespace: scalityui.Namespace,
+			Namespace: defaultNamespace,
 		},
 	}
 
@@ -562,7 +563,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      scalityui.Name,
-			Namespace: scalityui.Namespace,
+			Namespace: defaultNamespace,
 		},
 	}
 
@@ -608,7 +609,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		ingress := &networkingv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      scalityui.Name,
-				Namespace: scalityui.Namespace,
+				Namespace: defaultNamespace,
 			},
 		}
 
@@ -660,7 +661,7 @@ func (r *ScalityUIReconciler) calculateDeployedAppsHash(ctx context.Context, sca
 
 	err := r.Client.Get(ctx, client.ObjectKey{
 		Name:      configMapName,
-		Namespace: scalityui.Namespace,
+		Namespace: defaultNamespace,
 	}, configMap)
 
 	if err != nil {

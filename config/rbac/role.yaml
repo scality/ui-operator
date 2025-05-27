@@ -4,72 +4,72 @@ kind: ClusterRole
 metadata:
   name: manager-role
 rules:
-  - apiGroups:
-      - apps
-    resources:
-      - deployments
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-      - services
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - networking.k8s.io
-    resources:
-      - ingresses
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - ui.scality.com
-    resources:
-      - scalityuicomponentexposers
-      - scalityuicomponents
-      - scalityuis
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - ui.scality.com
-    resources:
-      - scalityuicomponentexposers/finalizers
-      - scalityuicomponents/finalizers
-      - scalityuis/finalizers
-    verbs:
-      - update
-  - apiGroups:
-      - ui.scality.com
-    resources:
-      - scalityuicomponentexposers/status
-      - scalityuicomponents/status
-      - scalityuis/status
-    verbs:
-      - get
-      - patch
-      - update
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ui.scality.com
+  resources:
+  - scalityuicomponentexposers
+  - scalityuicomponents
+  - scalityuis
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ui.scality.com
+  resources:
+  - scalityuicomponentexposers/finalizers
+  - scalityuicomponents/finalizers
+  - scalityuis/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ui.scality.com
+  resources:
+  - scalityuicomponentexposers/status
+  - scalityuicomponents/status
+  - scalityuis/status
+  verbs:
+  - get
+  - patch
+  - update

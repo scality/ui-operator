@@ -37,24 +37,24 @@ import (
 var _ = Describe("ScalityUI Shell Features", func() {
 	Context("When deploying a Scality Shell UI", func() {
 		const (
-			uiAppName      = "test-ui"
-			namespace      = "default"
-			productName    = "Test Product"
-			containerImage = "nginx:latest"
+			uiAppName       = "test-ui"
+			targetNamespace = "scality-ui" // Resources are deployed in scality-ui namespace
+			productName     = "Test Product"
+			containerImage  = "nginx:latest"
 		)
 
 		ctx := context.Background()
-		namespacedName := types.NamespacedName{Name: uiAppName, Namespace: namespace}
+		// ScalityUI is cluster-scoped, so no namespace in the name
+		clusterScopedName := types.NamespacedName{Name: uiAppName}
 		scalityui := &uiv1alpha1.ScalityUI{}
 
 		BeforeEach(func() {
 			By("Setting up a new Shell UI")
-			err := k8sClient.Get(ctx, namespacedName, scalityui)
+			err := k8sClient.Get(ctx, clusterScopedName, scalityui)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &uiv1alpha1.ScalityUI{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      uiAppName,
-						Namespace: namespace,
+						Name: uiAppName, // No namespace for cluster-scoped resource
 					},
 					Spec: uiv1alpha1.ScalityUISpec{
 						Image:       containerImage,
@@ -64,14 +64,14 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
 				Eventually(func() error {
-					return k8sClient.Get(ctx, namespacedName, scalityui)
+					return k8sClient.Get(ctx, clusterScopedName, scalityui)
 				}, time.Second*10, time.Millisecond*250).Should(Succeed())
 			}
 		})
 
 		AfterEach(func() {
 			By("Cleaning up test resources")
-			cleanupTestResources(ctx, namespacedName)
+			cleanupTestResources(ctx, clusterScopedName, targetNamespace)
 		})
 
 		Describe("Basic Shell UI Deployment", func() {
@@ -83,17 +83,17 @@ var _ = Describe("ScalityUI Shell Features", func() {
 					Log:    GinkgoLogr,
 				}
 
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying the Shell UI is properly configured")
-				verifyUIApplicationConfiguration(ctx, uiAppName, namespace, productName)
+				verifyUIApplicationConfiguration(ctx, uiAppName, targetNamespace, productName)
 
 				By("Verifying the Shell UI is accessible via service")
-				verifyUIApplicationService(ctx, uiAppName, namespace)
+				verifyUIApplicationService(ctx, uiAppName, targetNamespace)
 
 				By("Verifying the Shell UI has proper resource ownership")
-				verifyResourceOwnership(ctx, uiAppName, namespace, scalityui.UID)
+				verifyResourceOwnership(ctx, uiAppName, targetNamespace, scalityui.UID)
 			})
 		})
 
@@ -105,12 +105,12 @@ var _ = Describe("ScalityUI Shell Features", func() {
 					Scheme: k8sClient.Scheme(),
 					Log:    GinkgoLogr,
 				}
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Customizing the Shell UI with branding and navigation")
 				currentUI := &uiv1alpha1.ScalityUI{}
-				Expect(k8sClient.Get(ctx, namespacedName, currentUI)).To(Succeed())
+				Expect(k8sClient.Get(ctx, clusterScopedName, currentUI)).To(Succeed())
 
 				currentUI.Spec.ProductName = "Custom Branded Product"
 				currentUI.Spec.Navbar = uiv1alpha1.Navbar{
@@ -149,20 +149,20 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(k8sClient.Update(ctx, currentUI)).To(Succeed())
 
 				By("Applying the customization changes")
-				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying the Shell UI reflects the custom branding")
-				verifyCustomBranding(ctx, uiAppName, namespace, "Custom Branded Product")
+				verifyCustomBranding(ctx, uiAppName, targetNamespace, "Custom Branded Product")
 
 				By("Verifying the custom navigation is configured")
-				verifyCustomNavigation(ctx, uiAppName, namespace)
+				verifyCustomNavigation(ctx, uiAppName, targetNamespace)
 
 				By("Verifying the custom themes are applied")
-				verifyCustomThemes(ctx, uiAppName, namespace)
+				verifyCustomThemes(ctx, uiAppName, targetNamespace)
 
 				By("Verifying user customization options are enabled")
-				verifyUserCustomizationOptions(ctx, uiAppName, namespace)
+				verifyUserCustomizationOptions(ctx, uiAppName, targetNamespace)
 			})
 		})
 
@@ -174,23 +174,23 @@ var _ = Describe("ScalityUI Shell Features", func() {
 					Scheme: k8sClient.Scheme(),
 					Log:    GinkgoLogr,
 				}
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Updating to a new shell application version")
 				currentUI := &uiv1alpha1.ScalityUI{}
-				Expect(k8sClient.Get(ctx, namespacedName, currentUI)).To(Succeed())
+				Expect(k8sClient.Get(ctx, clusterScopedName, currentUI)).To(Succeed())
 
 				newImage := "nginx:1.21"
 				currentUI.Spec.Image = newImage
 				Expect(k8sClient.Update(ctx, currentUI)).To(Succeed())
 
 				By("Applying the version update")
-				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying the shell application is running the new version")
-				verifyApplicationVersion(ctx, uiAppName, namespace, newImage)
+				verifyApplicationVersion(ctx, uiAppName, targetNamespace, newImage)
 			})
 		})
 
@@ -318,29 +318,28 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 	Context("When managing Ingress resources", func() {
 		const (
-			resourceName      = "test-ui-ingress"
-			resourceNamespace = "default"
-			productName       = "Test UI with Ingress"
-			imageName         = "nginx:latest"
+			resourceName    = "test-ui-ingress"
+			targetNamespace = "scality-ui" // Resources are deployed in scality-ui namespace
+			productName     = "Test UI with Ingress"
+			imageName       = "nginx:latest"
 		)
 
 		ctx := context.Background()
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: resourceNamespace,
-		}
+		// ScalityUI is cluster-scoped
+		clusterScopedName := types.NamespacedName{Name: resourceName}
 
 		AfterEach(func() {
-			// Clean up resources
+			// Clean up ScalityUI resource (cluster-scoped)
 			resource := &uiv1alpha1.ScalityUI{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			err := k8sClient.Get(ctx, clusterScopedName, resource)
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 			}
 
-			// Clean up Ingress
+			// Clean up Ingress (in target namespace)
 			ingress := &networkingv1.Ingress{}
-			err = k8sClient.Get(ctx, typeNamespacedName, ingress)
+			ingressName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+			err = k8sClient.Get(ctx, ingressName, ingress)
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, ingress)).To(Succeed())
 			}
@@ -350,8 +349,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			By("Creating a ScalityUI without network configuration")
 			resource := &uiv1alpha1.ScalityUI{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: resourceNamespace,
+					Name: resourceName, // No namespace for cluster-scoped resource
 				},
 				Spec: uiv1alpha1.ScalityUISpec{
 					Image:       imageName,
@@ -366,14 +364,15 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
+				NamespacedName: clusterScopedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying that an Ingress is created")
+			By("Verifying that an Ingress is created in the target namespace")
 			ingress := &networkingv1.Ingress{}
+			ingressName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, typeNamespacedName, ingress)
+				return k8sClient.Get(ctx, ingressName, ingress)
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 			By("Verifying the Ingress has basic configuration")
@@ -387,8 +386,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			By("Creating a ScalityUI with network configuration")
 			resource := &uiv1alpha1.ScalityUI{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: resourceNamespace,
+					Name: resourceName, // No namespace for cluster-scoped resource
 				},
 				Spec: uiv1alpha1.ScalityUISpec{
 					Image:       imageName,
@@ -410,14 +408,15 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
+				NamespacedName: clusterScopedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying that an Ingress is created with custom configuration")
 			ingress := &networkingv1.Ingress{}
+			ingressName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, typeNamespacedName, ingress)
+				return k8sClient.Get(ctx, ingressName, ingress)
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 			By("Verifying the Ingress has the specified host and class")
@@ -435,8 +434,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			By("Creating a ScalityUI resource")
 			resource := &uiv1alpha1.ScalityUI{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: resourceNamespace,
+					Name: resourceName, // No namespace for cluster-scoped resource
 				},
 				Spec: uiv1alpha1.ScalityUISpec{
 					Image:       imageName,
@@ -451,166 +449,15 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
+				NamespacedName: clusterScopedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying the Ingress routes traffic to the root path")
 			ingress := &networkingv1.Ingress{}
+			ingressName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, typeNamespacedName, ingress)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			By("Verifying the path configuration allows access to the application")
-			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/"))
-			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].PathType).NotTo(BeNil())
-			Expect(*ingress.Spec.Rules[0].HTTP.Paths[0].PathType).To(Equal(networkingv1.PathTypePrefix))
-		})
-	})
-
-	Context("When managing Ingress resources", func() {
-		const (
-			resourceName      = "test-ui-ingress"
-			resourceNamespace = "default"
-			productName       = "Test UI with Ingress"
-			imageName         = "nginx:latest"
-		)
-
-		ctx := context.Background()
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: resourceNamespace,
-		}
-
-		AfterEach(func() {
-			// Clean up resources
-			resource := &uiv1alpha1.ScalityUI{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			if err == nil {
-				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-			}
-
-			// Clean up Ingress
-			ingress := &networkingv1.Ingress{}
-			err = k8sClient.Get(ctx, typeNamespacedName, ingress)
-			if err == nil {
-				Expect(k8sClient.Delete(ctx, ingress)).To(Succeed())
-			}
-		})
-
-		It("should create a default Ingress when no network configuration is provided", func() {
-			By("Creating a ScalityUI without network configuration")
-			resource := &uiv1alpha1.ScalityUI{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: resourceNamespace,
-				},
-				Spec: uiv1alpha1.ScalityUISpec{
-					Image:       imageName,
-					ProductName: productName,
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-
-			By("Reconciling the resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying that an Ingress is created")
-			ingress := &networkingv1.Ingress{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, typeNamespacedName, ingress)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			By("Verifying the Ingress has basic configuration")
-			Expect(ingress.Spec.Rules).To(HaveLen(1))
-			Expect(ingress.Spec.Rules[0].HTTP.Paths).To(HaveLen(1))
-			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/"))
-			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Name).To(Equal(resourceName))
-		})
-
-		It("should create a custom Ingress when network configuration is provided", func() {
-			By("Creating a ScalityUI with network configuration")
-			resource := &uiv1alpha1.ScalityUI{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: resourceNamespace,
-				},
-				Spec: uiv1alpha1.ScalityUISpec{
-					Image:       imageName,
-					ProductName: productName,
-					Networks: uiv1alpha1.UINetworks{
-						Host:             "test.example.com",
-						IngressClassName: "nginx",
-						IngressAnnotations: map[string]string{
-							"nginx.ingress.kubernetes.io/ssl-redirect": "false",
-						},
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-
-			By("Reconciling the resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying that an Ingress is created with custom configuration")
-			ingress := &networkingv1.Ingress{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, typeNamespacedName, ingress)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			By("Verifying the Ingress has the specified host and class")
-			Expect(ingress.Spec.IngressClassName).NotTo(BeNil())
-			Expect(*ingress.Spec.IngressClassName).To(Equal("nginx"))
-			Expect(ingress.Spec.Rules).To(HaveLen(1))
-			Expect(ingress.Spec.Rules[0].Host).To(Equal("test.example.com"))
-
-			By("Verifying the Ingress has the specified annotations")
-			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/ssl-redirect"))
-			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"]).To(Equal("false"))
-		})
-
-		It("should expose the application at the root path", func() {
-			By("Creating a ScalityUI resource")
-			resource := &uiv1alpha1.ScalityUI{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: resourceNamespace,
-				},
-				Spec: uiv1alpha1.ScalityUISpec{
-					Image:       imageName,
-					ProductName: productName,
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-
-			By("Reconciling the resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying the Ingress routes traffic to the root path")
-			ingress := &networkingv1.Ingress{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, typeNamespacedName, ingress)
+				return k8sClient.Get(ctx, ingressName, ingress)
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 			By("Verifying the path configuration allows access to the application")
@@ -623,36 +470,47 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 // Helper functions for test verification - these abstract away implementation details
 
-func cleanupTestResources(ctx context.Context, namespacedName types.NamespacedName) {
-	// Clean up ScalityUI resource
+func cleanupTestResources(ctx context.Context, clusterScopedName types.NamespacedName, targetNamespace string) {
+	// Clean up ScalityUI resource (cluster-scoped)
 	resource := &uiv1alpha1.ScalityUI{}
-	if err := k8sClient.Get(ctx, namespacedName, resource); err == nil {
+	if err := k8sClient.Get(ctx, clusterScopedName, resource); err == nil {
 		Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 	}
 
-	// Clean up associated resources
+	// Clean up associated resources in target namespace
+	resourceName := clusterScopedName.Name
+
 	configMap := &corev1.ConfigMap{}
-	if err := k8sClient.Get(ctx, namespacedName, configMap); err == nil {
+	configMapName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+	if err := k8sClient.Get(ctx, configMapName, configMap); err == nil {
 		Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
 	}
 
 	deployedAppsConfigMap := &corev1.ConfigMap{}
 	deployedAppsName := types.NamespacedName{
-		Name:      namespacedName.Name + "-deployed-ui-apps",
-		Namespace: namespacedName.Namespace,
+		Name:      resourceName + "-deployed-ui-apps",
+		Namespace: targetNamespace,
 	}
 	if err := k8sClient.Get(ctx, deployedAppsName, deployedAppsConfigMap); err == nil {
 		Expect(k8sClient.Delete(ctx, deployedAppsConfigMap)).To(Succeed())
 	}
 
 	deployment := &appsv1.Deployment{}
-	if err := k8sClient.Get(ctx, namespacedName, deployment); err == nil {
+	deploymentName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+	if err := k8sClient.Get(ctx, deploymentName, deployment); err == nil {
 		Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 	}
 
 	service := &corev1.Service{}
-	if err := k8sClient.Get(ctx, namespacedName, service); err == nil {
+	serviceName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+	if err := k8sClient.Get(ctx, serviceName, service); err == nil {
 		Expect(k8sClient.Delete(ctx, service)).To(Succeed())
+	}
+
+	ingress := &networkingv1.Ingress{}
+	ingressName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+	if err := k8sClient.Get(ctx, ingressName, ingress); err == nil {
+		Expect(k8sClient.Delete(ctx, ingress)).To(Succeed())
 	}
 }
 
