@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -39,9 +40,20 @@ import (
 )
 
 const (
-	uiServicePort    = 80
-	defaultNamespace = "scality-ui"
+	uiServicePort = 80
 )
+
+// getOperatorNamespace returns the namespace where the operator is deployed.
+// It reads from the POD_NAMESPACE environment variable, which should be set
+// using the downward API in the operator's deployment.
+// Falls back to "scality-ui" if the environment variable is not set.
+func getOperatorNamespace() string {
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		return ns
+	}
+	// Fallback to default namespace if POD_NAMESPACE is not set
+	return "scality-ui"
+}
 
 // createConfigJSON creates a JSON config from the ScalityUI object
 func createConfigJSON(scalityui *uiscalitycomv1alpha1.ScalityUI) ([]byte, error) {
@@ -376,7 +388,7 @@ func (r *ScalityUIReconciler) createOrUpdateService(ctx context.Context, scality
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      scalityui.Name,
-			Namespace: defaultNamespace,
+			Namespace: getOperatorNamespace(),
 		},
 	}
 
@@ -496,7 +508,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      scalityui.Name,
-			Namespace: defaultNamespace,
+			Namespace: getOperatorNamespace(),
 		},
 	}
 	configJsonData := map[string]string{"config.json": string(configJSON)}
@@ -515,7 +527,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	configMapDeployedApps := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      configMapDeployedAppsName,
-			Namespace: defaultNamespace,
+			Namespace: getOperatorNamespace(),
 		},
 	}
 
@@ -550,7 +562,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      scalityui.Name,
-			Namespace: defaultNamespace,
+			Namespace: getOperatorNamespace(),
 		},
 	}
 
@@ -596,7 +608,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		ingress := &networkingv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      scalityui.Name,
-				Namespace: defaultNamespace,
+				Namespace: getOperatorNamespace(),
 			},
 		}
 
@@ -648,7 +660,7 @@ func (r *ScalityUIReconciler) calculateDeployedAppsHash(ctx context.Context, sca
 
 	err := r.Client.Get(ctx, client.ObjectKey{
 		Name:      configMapName,
-		Namespace: defaultNamespace,
+		Namespace: getOperatorNamespace(),
 	}, configMap)
 
 	if err != nil {
