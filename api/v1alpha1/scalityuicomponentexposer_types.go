@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -27,14 +28,38 @@ import (
 type ScalityUIComponentExposerSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	ScalityUI          string `json:"scality-ui"`
-	ScalityUIComponent string `json:"scality-ui-component"`
+
+	// ScalityUI references the ScalityUI resource name
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ScalityUI string `json:"scalityUI"`
+
+	// ScalityUIComponent references the ScalityUIComponent resource name
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ScalityUIComponent string `json:"scalityUIComponent"`
+
+	// AppHistoryPath specifies the path to the app history
+	// +kubebuilder:validation:Required
+	AppHistoryBasePath string `json:"appHistoryBasePath"`
+
+	// Auth contains authentication configuration for the exposed component
+	// +kubebuilder:validation:Optional
+	Auth *AuthConfig `json:"auth,omitempty"`
+
+	// SelfConfiguration specifies the self configuration
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	SelfConfiguration *runtime.RawExtension `json:"selfConfiguration,omitempty"`
 }
 
 // ScalityUIComponentExposerStatus defines the observed state of ScalityUIComponentExposer
 type ScalityUIComponentExposerStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	// Conditions represent the latest available observations of the exposer's state
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
