@@ -63,20 +63,14 @@ func createConfigJSON(scalityui *uiscalitycomv1alpha1.ScalityUI) ([]byte, error)
 	themesData := make(map[string]interface{})
 	if scalityui.Spec.Themes == (uiscalitycomv1alpha1.Themes{}) { // Check against zero value for the Themes struct
 		themesData["light"] = map[string]interface{}{
-			"type": "core-ui",
-			"name": "artescaLight",
-			"logo": map[string]interface{}{
-				"type":  "path",
-				"value": "",
-			},
+			"type":     "core-ui",
+			"name":     "artescaLight",
+			"logoPath": "",
 		}
 		themesData["dark"] = map[string]interface{}{
-			"type": "core-ui",
-			"name": "darkRebrand",
-			"logo": map[string]interface{}{
-				"type":  "path",
-				"value": "",
-			},
+			"type":     "core-ui",
+			"name":     "darkRebrand",
+			"logoPath": "",
 		}
 	} else {
 		// User has provided the 'themes' block; use values from spec.
@@ -134,16 +128,9 @@ func convertNavbarItems(items []uiscalitycomv1alpha1.NavbarItem) []map[string]in
 // convertTheme converts a Theme struct to the expected JSON format
 func convertTheme(theme uiscalitycomv1alpha1.Theme) map[string]interface{} {
 	result := map[string]interface{}{
-		"type": theme.Type,
-		"name": theme.Name,
-		"logo": map[string]interface{}{
-			"type":  theme.Logo.Type,
-			"value": theme.Logo.Value,
-		},
-	}
-	if theme.Logo.MimeType != "" {
-		logoMap := result["logo"].(map[string]interface{})
-		logoMap["mimeType"] = theme.Logo.MimeType
+		"type":     theme.Type,
+		"name":     theme.Name,
+		"logoPath": theme.Logo.Value,
 	}
 	return result
 }

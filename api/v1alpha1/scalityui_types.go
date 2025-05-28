@@ -56,16 +56,13 @@ type Theme struct {
 
 // Logo defines the logo configuration with support for different formats.
 type Logo struct {
-	// Type specifies the logo type: "path", "base64", or "svg".
+	// Type specifies the logo type: "path", "data", or "svg".
 	Type string `json:"type"`
 	// Value contains the logo data based on the type:
 	// - For "path": file path to the logo image
-	// - For "base64": base64-encoded image data
+	// - For "data": data URI with base64-encoded image data (e.g., "data:image/png;base64,iVBORw0KGgo...")
 	// - For "svg": inline SVG content
 	Value string `json:"value"`
-	// MimeType specifies the MIME type when using base64 (e.g., "image/png", "image/jpeg").
-	// Optional for "path" and "svg" types.
-	MimeType string `json:"mimeType,omitempty"`
 }
 
 // Navbar configures the UI navbar.
