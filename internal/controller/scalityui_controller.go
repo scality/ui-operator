@@ -108,6 +108,27 @@ func createConfigJSON(scalityui *uiscalitycomv1alpha1.ScalityUI) ([]byte, error)
 	return json.Marshal(configOutput)
 }
 
+// getNodeCount returns the number of ready nodes in the cluster
+func (r *ScalityUIReconciler) getNodeCount(ctx context.Context) (int, error) {
+	nodeList := &corev1.NodeList{}
+	err := r.Client.List(ctx, nodeList)
+	if err != nil {
+		return 0, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	readyNodes := 0
+	for _, node := range nodeList.Items {
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+				readyNodes++
+				break
+			}
+		}
+	}
+
+	return readyNodes, nil
+}
+
 // convertNavbarItems converts NavbarItem structs to the expected JSON format
 func convertNavbarItems(items []uiscalitycomv1alpha1.NavbarItem) []map[string]interface{} {
 	if items == nil {
@@ -187,11 +208,26 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 		}
 		deploy.Spec.Selector.MatchLabels["app"] = scalityui.Name
 
-		one := int32(1)
-		if deploy.Spec.Replicas == nil {
-			deploy.Spec.Replicas = &one
+		// Determine replica count based on node count for high availability
+		nodeCount, err := r.getNodeCount(ctx)
+		if err != nil {
+			// Log error but continue with default single replica
+			logger := log.FromContext(ctx)
+			logger.Error(err, "Failed to get node count, defaulting to 1 replica")
+			nodeCount = 1
+		}
+
+		var replicas int32
+		if nodeCount > 1 {
+			replicas = 2 // High availability with 2 replicas when multiple nodes available
 		} else {
-			*deploy.Spec.Replicas = one
+			replicas = 1 // Single replica for single node clusters
+		}
+
+		if deploy.Spec.Replicas == nil {
+			deploy.Spec.Replicas = &replicas
+		} else {
+			*deploy.Spec.Replicas = replicas
 		}
 
 		zeroIntStr := intstr.FromInt(0)
@@ -227,6 +263,9 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 		if deployedAppsHash != "" {
 			deploy.Spec.Template.Annotations["checksum/deployed-ui-apps"] = deployedAppsHash
 		}
+
+		// Add pod anti-affinity for high availability when multiple replicas
+		r.configurePodAntiAffinity(deploy, scalityui, replicas)
 
 		// Volume definitions
 		configVolumeName := scalityui.Name + "-config-volume"
@@ -300,6 +339,43 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 
 		return nil
 	})
+}
+
+// configurePodAntiAffinity sets up pod anti-affinity for high availability
+func (r *ScalityUIReconciler) configurePodAntiAffinity(deploy *appsv1.Deployment, scalityui *uiscalitycomv1alpha1.ScalityUI, replicas int32) {
+	if replicas <= 1 {
+		return
+	}
+
+	if deploy.Spec.Template.Spec.Affinity == nil {
+		deploy.Spec.Template.Spec.Affinity = &corev1.Affinity{}
+	}
+	if deploy.Spec.Template.Spec.Affinity.PodAntiAffinity == nil {
+		deploy.Spec.Template.Spec.Affinity.PodAntiAffinity = &corev1.PodAntiAffinity{}
+	}
+
+	// Check if anti-affinity rule already exists
+	if r.hasAntiAffinityRule(deploy, scalityui.Name) {
+		return
+	}
+
+	// Add preferred anti-affinity to spread pods across nodes
+	preferredAntiAffinity := corev1.WeightedPodAffinityTerm{
+		Weight: 100,
+		PodAffinityTerm: corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": scalityui.Name,
+				},
+			},
+			TopologyKey: "kubernetes.io/hostname",
+		},
+	}
+
+	deploy.Spec.Template.Spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution = append(
+		deploy.Spec.Template.Spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
+		preferredAntiAffinity,
+	)
 }
 
 // createOrUpdateIngress creates or updates an Ingress with the given configuration
@@ -475,6 +551,7 @@ type ScalityUIReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -801,4 +878,17 @@ func (r *ScalityUIReconciler) findUIForExposer(ctx context.Context, obj client.O
 			},
 		},
 	}
+}
+
+// hasAntiAffinityRule checks if the anti-affinity rule already exists
+func (r *ScalityUIReconciler) hasAntiAffinityRule(deploy *appsv1.Deployment, appName string) bool {
+	for _, existing := range deploy.Spec.Template.Spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution {
+		if existing.PodAffinityTerm.TopologyKey == "kubernetes.io/hostname" &&
+			existing.PodAffinityTerm.LabelSelector != nil &&
+			len(existing.PodAffinityTerm.LabelSelector.MatchLabels) == 1 &&
+			existing.PodAffinityTerm.LabelSelector.MatchLabels["app"] == appName {
+			return true
+		}
+	}
+	return false
 }
