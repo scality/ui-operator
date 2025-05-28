@@ -143,7 +143,6 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		if err := controllerutil.SetControllerReference(scalityUIComponent, deployment, r.Scheme); err != nil {
 			return err
 		}
-
 		// Preserve existing volumes and annotations if they exist
 		existingVolumes := deployment.Spec.Template.Spec.Volumes
 		existingAnnotations := deployment.Spec.Template.Annotations
