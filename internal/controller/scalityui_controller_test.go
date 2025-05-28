@@ -35,6 +35,12 @@ import (
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 )
 
+const (
+	// Test timeout constants
+	eventuallyTimeout  = 10 * time.Second       // Maximum time to wait for resource creation/updates in tests
+	eventuallyInterval = 250 * time.Millisecond // Polling interval for checking resource status
+)
+
 var _ = Describe("ScalityUI Shell Features", func() {
 	Context("When deploying a Scality Shell UI", func() {
 		const (
@@ -65,7 +71,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 				Eventually(func() error {
 					return k8sClient.Get(ctx, clusterScopedName, scalityui)
-				}, time.Second*10, time.Millisecond*250).Should(Succeed())
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 			}
 		})
 
@@ -191,6 +197,193 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 				By("Verifying the shell application is running the new version")
 				verifyApplicationVersion(ctx, uiAppName, newImage)
+			})
+
+			Describe("High Availability Features", func() {
+				It("should deploy with single replica when only one node is available", func() {
+					By("Creating a single node in the cluster")
+					node := &corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "test-node-single",
+						},
+						Status: corev1.NodeStatus{
+							Conditions: []corev1.NodeCondition{
+								{
+									Type:   corev1.NodeReady,
+									Status: corev1.ConditionTrue,
+								},
+							},
+						},
+					}
+					Expect(k8sClient.Create(ctx, node)).To(Succeed())
+					defer func() {
+						Expect(k8sClient.Delete(ctx, node)).To(Succeed())
+					}()
+
+					By("Deploying the Shell UI")
+					reconciler := &ScalityUIReconciler{
+						Client: k8sClient,
+						Scheme: k8sClient.Scheme(),
+						Log:    GinkgoLogr,
+					}
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+					Expect(err).NotTo(HaveOccurred())
+
+					By("Verifying single replica deployment")
+					deployment := &appsv1.Deployment{}
+					deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+					Eventually(func() error {
+						return k8sClient.Get(ctx, deploymentName, deployment)
+					}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+					Expect(deployment.Spec.Replicas).NotTo(BeNil())
+					Expect(*deployment.Spec.Replicas).To(Equal(int32(1)))
+
+					By("Verifying no anti-affinity rules are set for single replica")
+					Expect(deployment.Spec.Template.Spec.Affinity).To(BeNil())
+				})
+
+				It("should deploy with high availability when multiple nodes are available", func() {
+					By("Creating multiple nodes in the cluster")
+					node1 := &corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "test-node-1",
+						},
+						Status: corev1.NodeStatus{
+							Conditions: []corev1.NodeCondition{
+								{
+									Type:   corev1.NodeReady,
+									Status: corev1.ConditionTrue,
+								},
+							},
+						},
+					}
+					node2 := &corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "test-node-2",
+						},
+						Status: corev1.NodeStatus{
+							Conditions: []corev1.NodeCondition{
+								{
+									Type:   corev1.NodeReady,
+									Status: corev1.ConditionTrue,
+								},
+							},
+						},
+					}
+					Expect(k8sClient.Create(ctx, node1)).To(Succeed())
+					Expect(k8sClient.Create(ctx, node2)).To(Succeed())
+					defer func() {
+						Expect(k8sClient.Delete(ctx, node1)).To(Succeed())
+						Expect(k8sClient.Delete(ctx, node2)).To(Succeed())
+					}()
+
+					By("Deploying the Shell UI")
+					reconciler := &ScalityUIReconciler{
+						Client: k8sClient,
+						Scheme: k8sClient.Scheme(),
+						Log:    GinkgoLogr,
+					}
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+					Expect(err).NotTo(HaveOccurred())
+
+					By("Verifying high availability deployment with 2 replicas")
+					deployment := &appsv1.Deployment{}
+					deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+					Eventually(func() error {
+						return k8sClient.Get(ctx, deploymentName, deployment)
+					}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+					Expect(deployment.Spec.Replicas).NotTo(BeNil())
+					Expect(*deployment.Spec.Replicas).To(Equal(int32(2)))
+
+					By("Verifying pod anti-affinity rules are configured")
+					Expect(deployment.Spec.Template.Spec.Affinity).NotTo(BeNil())
+					Expect(deployment.Spec.Template.Spec.Affinity.PodAntiAffinity).NotTo(BeNil())
+					Expect(deployment.Spec.Template.Spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution).To(HaveLen(1))
+
+					antiAffinityRule := deployment.Spec.Template.Spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0]
+					Expect(antiAffinityRule.Weight).To(Equal(int32(100)))
+					Expect(antiAffinityRule.PodAffinityTerm.TopologyKey).To(Equal("kubernetes.io/hostname"))
+					Expect(antiAffinityRule.PodAffinityTerm.LabelSelector).NotTo(BeNil())
+					Expect(antiAffinityRule.PodAffinityTerm.LabelSelector.MatchLabels).To(HaveKeyWithValue("app", uiAppName))
+				})
+
+				It("should handle node count changes dynamically", func() {
+					By("Starting with a single node")
+					node1 := &corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "test-node-dynamic-1",
+						},
+						Status: corev1.NodeStatus{
+							Conditions: []corev1.NodeCondition{
+								{
+									Type:   corev1.NodeReady,
+									Status: corev1.ConditionTrue,
+								},
+							},
+						},
+					}
+					Expect(k8sClient.Create(ctx, node1)).To(Succeed())
+					defer func() {
+						Expect(k8sClient.Delete(ctx, node1)).To(Succeed())
+					}()
+
+					By("Deploying the Shell UI with single node")
+					reconciler := &ScalityUIReconciler{
+						Client: k8sClient,
+						Scheme: k8sClient.Scheme(),
+						Log:    GinkgoLogr,
+					}
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+					Expect(err).NotTo(HaveOccurred())
+
+					By("Verifying single replica deployment initially")
+					deployment := &appsv1.Deployment{}
+					deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+					Eventually(func() error {
+						return k8sClient.Get(ctx, deploymentName, deployment)
+					}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+					Expect(*deployment.Spec.Replicas).To(Equal(int32(1)))
+
+					By("Adding a second node")
+					node2 := &corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "test-node-dynamic-2",
+						},
+						Status: corev1.NodeStatus{
+							Conditions: []corev1.NodeCondition{
+								{
+									Type:   corev1.NodeReady,
+									Status: corev1.ConditionTrue,
+								},
+							},
+						},
+					}
+					Expect(k8sClient.Create(ctx, node2)).To(Succeed())
+					defer func() {
+						Expect(k8sClient.Delete(ctx, node2)).To(Succeed())
+					}()
+
+					By("Reconciling after adding the second node")
+					_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+					Expect(err).NotTo(HaveOccurred())
+
+					By("Verifying the deployment scales to 2 replicas with anti-affinity")
+					Eventually(func() int32 {
+						err := k8sClient.Get(ctx, deploymentName, deployment)
+						if err != nil {
+							return 0
+						}
+						if deployment.Spec.Replicas == nil {
+							return 0
+						}
+						return *deployment.Spec.Replicas
+					}, eventuallyTimeout, eventuallyInterval).Should(Equal(int32(2)))
+
+					Expect(deployment.Spec.Template.Spec.Affinity).NotTo(BeNil())
+					Expect(deployment.Spec.Template.Spec.Affinity.PodAntiAffinity).NotTo(BeNil())
+				})
 			})
 		})
 
@@ -427,7 +620,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, ingressName, ingress)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+			}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 			By("Verifying the Ingress has basic configuration")
 			Expect(ingress.Spec.Rules).To(HaveLen(1))
@@ -471,7 +664,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, ingressName, ingress)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+			}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 			By("Verifying the Ingress has the specified host and class")
 			Expect(ingress.Spec.IngressClassName).NotTo(BeNil())
@@ -512,7 +705,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, ingressName, ingress)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+			}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 			By("Verifying the path configuration allows access to the application")
 			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/"))
@@ -600,7 +793,7 @@ func verifyUIApplicationConfiguration(ctx context.Context, appName, expectedProd
 	configMap := &corev1.ConfigMap{}
 	Eventually(func() error {
 		return k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, configMap)
-	}, time.Second*10, time.Millisecond*250).Should(Succeed())
+	}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 	Expect(configMap.Data).To(HaveKey("config.json"))
 
@@ -613,7 +806,7 @@ func verifyUIApplicationConfiguration(ctx context.Context, appName, expectedProd
 	deployedAppsConfigMap := &corev1.ConfigMap{}
 	Eventually(func() error {
 		return k8sClient.Get(ctx, types.NamespacedName{Name: appName + "-deployed-ui-apps", Namespace: getOperatorNamespace()}, deployedAppsConfigMap)
-	}, time.Second*10, time.Millisecond*250).Should(Succeed())
+	}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 	Expect(deployedAppsConfigMap.Data).To(HaveKeyWithValue("deployed-ui-apps.json", "[]"))
 }
@@ -622,7 +815,7 @@ func verifyUIApplicationService(ctx context.Context, appName string) {
 	service := &corev1.Service{}
 	Eventually(func() error {
 		return k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, service)
-	}, time.Second*10, time.Millisecond*250).Should(Succeed())
+	}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 	Expect(service.Spec.Selector).To(HaveKeyWithValue("app", appName))
 	Expect(service.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
@@ -661,7 +854,7 @@ func verifyCustomBranding(ctx context.Context, appName, expectedProductName stri
 		var config map[string]interface{}
 		err = json.Unmarshal([]byte(configMap.Data["config.json"]), &config)
 		return err == nil && config["productName"] == expectedProductName
-	}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+	}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
 
 	var config map[string]interface{}
 	Expect(json.Unmarshal([]byte(configMap.Data["config.json"]), &config)).To(Succeed())
@@ -728,14 +921,14 @@ func verifyApplicationVersion(ctx context.Context, appName, expectedImage string
 			return deployment.Spec.Template.Spec.Containers[0].Image
 		}
 		return ""
-	}, time.Second*10, time.Millisecond*250).Should(Equal(expectedImage))
+	}, eventuallyTimeout, eventuallyInterval).Should(Equal(expectedImage))
 }
 
 func verifyDeployedUIAppsContent(ctx context.Context, appName string, expectedContent []map[string]interface{}) {
 	configMap := &corev1.ConfigMap{}
 	Eventually(func() error {
 		return k8sClient.Get(ctx, types.NamespacedName{Name: appName + "-deployed-ui-apps", Namespace: getOperatorNamespace()}, configMap)
-	}, time.Second*10, time.Millisecond*250).Should(Succeed())
+	}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 	Expect(configMap.Data).To(HaveKey("deployed-ui-apps.json"))
 
