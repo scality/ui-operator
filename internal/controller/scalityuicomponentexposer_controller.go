@@ -18,10 +18,14 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -48,6 +52,7 @@ const (
 	// Condition types
 	conditionTypeConfigMapReady    = "ConfigMapReady"
 	conditionTypeDependenciesReady = "DependenciesReady"
+	conditionTypeDeploymentReady   = "DeploymentReady"
 
 	// Condition reasons
 	reasonReconcileSucceeded = "ReconcileSucceeded"
@@ -60,6 +65,11 @@ const (
 	// Runtime configuration constants
 	runtimeConfigKind       = "MicroAppRuntimeConfiguration"
 	runtimeConfigAPIVersion = "ui.scality.com/v1alpha1"
+
+	// Mount and deployment related constants
+	configHashAnnotation = "ui.scality.com/config-hash"
+	volumeNamePrefix     = "config-volume-"
+	mountPath            = "/usr/share/nginx/html/.well-known/runtime-app-configuration"
 )
 
 // ScalityUIComponentExposerReconciler reconciles a ScalityUIComponentExposer object
@@ -74,6 +84,7 @@ type ScalityUIComponentExposerReconciler struct {
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuis,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuis,verbs=get;list;watch,resourceNames=*
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
 
 // MicroAppRuntimeConfiguration represents the runtime configuration structure
 type MicroAppRuntimeConfiguration struct {
@@ -144,6 +155,28 @@ func (r *ScalityUIComponentExposerReconciler) Reconcile(ctx context.Context, req
 
 	r.setStatusCondition(exposer, conditionTypeConfigMapReady, metav1.ConditionTrue,
 		reasonReconcileSucceeded, "ConfigMap successfully created/updated")
+
+	// Calculate ConfigMap hash and update deployment
+	configMapHash, err := r.calculateConfigMapHash(configMap)
+	if err != nil {
+		logger.Error(err, "Failed to calculate ConfigMap hash")
+		return ctrl.Result{RequeueAfter: defaultRequeueInterval}, fmt.Errorf("failed to calculate ConfigMap hash: %w", err)
+	}
+
+	if err := r.updateComponentDeployment(ctx, component, exposer, configMapHash, logger); err != nil {
+		logger.Error(err, "Failed to update component deployment")
+		r.setStatusCondition(exposer, conditionTypeDeploymentReady, metav1.ConditionFalse,
+			reasonReconcileFailed, fmt.Sprintf("Failed to update deployment: %v", err))
+
+		if updateErr := r.updateStatus(ctx, exposer, logger); updateErr != nil {
+			logger.Error(updateErr, "Failed to update status after deployment update failure")
+		}
+
+		return ctrl.Result{RequeueAfter: defaultRequeueInterval}, fmt.Errorf("failed to update component deployment: %w", err)
+	}
+
+	r.setStatusCondition(exposer, conditionTypeDeploymentReady, metav1.ConditionTrue,
+		reasonReconcileSucceeded, "Deployment successfully updated with ConfigMap mount")
 
 	if err := r.updateStatus(ctx, exposer, logger); err != nil {
 		logger.Error(err, "Failed to update status")
@@ -429,6 +462,153 @@ func (r *ScalityUIComponentExposerReconciler) findExposersForScalityUI(ctx conte
 	}
 
 	return requests
+}
+
+// calculateConfigMapHash calculates the SHA-256 hash of the ConfigMap data
+func (r *ScalityUIComponentExposerReconciler) calculateConfigMapHash(configMap *corev1.ConfigMap) (string, error) {
+	dataToHash, dataKeyExists := configMap.Data[configMapKey]
+	if !dataKeyExists {
+		return "", fmt.Errorf("key '%s' missing from ConfigMap '%s'", configMapKey, configMap.Name)
+	}
+	hash := sha256.Sum256([]byte(dataToHash))
+	return hex.EncodeToString(hash[:]), nil
+}
+
+// updateComponentDeployment updates the component's deployment to mount the ConfigMap
+func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(
+	ctx context.Context,
+	component *uiv1alpha1.ScalityUIComponent,
+	exposer *uiv1alpha1.ScalityUIComponentExposer,
+	configMapHash string,
+	logger logr.Logger,
+) error {
+	deployment := &appsv1.Deployment{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      component.Name,
+		Namespace: exposer.Namespace,
+	}, deployment)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Component deployment not found, skipping update",
+				"deployment", component.Name)
+			return nil
+		}
+		return fmt.Errorf("failed to get component deployment: %w", err)
+	}
+
+	logger.Info("Updating deployment with ConfigMap mount", "deployment", deployment.Name)
+
+	configChanged := false
+
+	result, err := ctrl.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+		volumeName := volumeNamePrefix + component.Name
+		configMapName := fmt.Sprintf("%s-%s", component.Name, configMapNameSuffix)
+
+		// Update or add the ConfigMap volume
+		configChanged = r.ensureConfigMapVolume(deployment, volumeName, configMapName) || configChanged
+
+		// Update or add the ConfigMap volume mount for each container
+		for i := range deployment.Spec.Template.Spec.Containers {
+			configChanged = r.ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName) || configChanged
+		}
+
+		// Set annotation to trigger rolling update if configuration changed or hash is different
+		if deployment.Spec.Template.Annotations == nil {
+			deployment.Spec.Template.Annotations = make(map[string]string)
+		}
+
+		// Update annotation if config changed or if hash is different
+		currentHashAnnotation := deployment.Spec.Template.Annotations[configHashAnnotation]
+
+		currentHash := ""
+		if currentHashAnnotation != "" {
+			if idx := strings.Index(currentHashAnnotation, "-"); idx > 0 {
+				currentHash = currentHashAnnotation[:idx]
+			} else {
+				currentHash = currentHashAnnotation
+			}
+		}
+
+		if configChanged || currentHash != configMapHash {
+			// Force a unique value by appending a timestamp to ensure pod restart
+			timestamp := time.Now().Format(time.RFC3339)
+			deployment.Spec.Template.Annotations[configHashAnnotation] = configMapHash + "-" + timestamp
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to update deployment with ConfigMap mount: %w", err)
+	}
+
+	logger.Info("Successfully updated deployment with ConfigMap mount",
+		"deployment", deployment.Name, "configChanged", configChanged, "operation", result)
+	return nil
+}
+
+// ensureConfigMapVolume ensures the deployment has the specified ConfigMap volume
+// Returns true if the volume was added or modified
+func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolume(deployment *appsv1.Deployment, volumeName, configMapName string) bool {
+	for i, vol := range deployment.Spec.Template.Spec.Volumes {
+		if vol.Name == volumeName {
+			// Update existing volume if needed
+			if vol.ConfigMap == nil || vol.ConfigMap.Name != configMapName {
+				deployment.Spec.Template.Spec.Volumes[i].ConfigMap = &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: configMapName,
+					},
+				}
+				return true
+			}
+			return false // Volume exists and is correctly configured
+		}
+	}
+
+	// Add new volume
+	deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+		Name: volumeName,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMapName,
+				},
+			},
+		},
+	})
+	return true
+}
+
+// ensureConfigMapVolumeMount ensures the container has the specified volume mount
+// Returns true if the mount was added or modified
+func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolumeMount(container *corev1.Container, volumeName string) bool {
+	// Check for existing mount and update if needed
+	for i, mount := range container.VolumeMounts {
+		if mount.Name == volumeName {
+			// Check if mount configuration needs update
+			needsUpdate := mount.MountPath != mountPath ||
+				mount.SubPath != configMapKey ||
+				!mount.ReadOnly
+
+			if needsUpdate {
+				container.VolumeMounts[i].MountPath = mountPath
+				container.VolumeMounts[i].SubPath = configMapKey
+				container.VolumeMounts[i].ReadOnly = true
+				return true
+			}
+			return false // Mount exists and is correctly configured
+		}
+	}
+
+	// Add new mount
+	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+		Name:      volumeName,
+		MountPath: mountPath,
+		SubPath:   configMapKey,
+		ReadOnly:  true,
+	})
+	return true
 }
 
 // SetupWithManager sets up the controller with the Manager.

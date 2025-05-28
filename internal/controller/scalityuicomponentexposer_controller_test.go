@@ -23,11 +23,13 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
@@ -625,6 +627,254 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}
 			err = controllerReconciler.validateAuthConfig(completeAuth)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should update deployment with ConfigMap mount and trigger rolling update", func() {
+			By("Creating component with deployment")
+			component := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-component-mount",
+					Namespace: testNamespace,
+				},
+				Status: uiv1alpha1.ScalityUIComponentStatus{
+					Kind: "test-kind",
+				},
+			}
+			Expect(k8sClient.Create(ctx, component)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, component) }()
+
+			// Create deployment
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-component-mount",
+					Namespace: testNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": "test"},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{"app": "test"},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "test-container",
+									Image: "test:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, deployment) }()
+
+			By("Creating exposer")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-exposer-mount",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: "test-component-mount",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposer) }()
+
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("Updating deployment with ConfigMap mount")
+			err := controllerReconciler.updateComponentDeployment(ctx, component, exposer, "test-hash", log.FromContext(ctx))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying deployment was updated")
+			updatedDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-component-mount",
+				Namespace: testNamespace,
+			}, updatedDeployment)).To(Succeed())
+
+			// Check volume
+			Expect(updatedDeployment.Spec.Template.Spec.Volumes).To(HaveLen(1))
+			volume := updatedDeployment.Spec.Template.Spec.Volumes[0]
+			Expect(volume.Name).To(Equal("config-volume-test-component-mount"))
+			Expect(volume.ConfigMap.Name).To(Equal("test-component-mount-runtime-app-configuration"))
+
+			// Check volume mount
+			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(HaveLen(1))
+			mount := updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts[0]
+			Expect(mount.Name).To(Equal("config-volume-test-component-mount"))
+			Expect(mount.MountPath).To(Equal("/usr/share/nginx/html/.well-known/runtime-app-configuration"))
+			Expect(mount.SubPath).To(Equal("runtime-app-configuration"))
+			Expect(mount.ReadOnly).To(BeTrue())
+
+			// Check annotation
+			Expect(updatedDeployment.Spec.Template.Annotations).To(HaveKey("ui.scality.com/config-hash"))
+			Expect(updatedDeployment.Spec.Template.Annotations["ui.scality.com/config-hash"]).To(ContainSubstring("test-hash"))
+		})
+
+		It("should ensure volume and volume mount correctly", func() {
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("Testing ensureConfigMapVolume")
+			deployment := &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Volumes: []corev1.Volume{},
+						},
+					},
+				},
+			}
+
+			// First call should add volume
+			changed := controllerReconciler.ensureConfigMapVolume(deployment, "test-volume", "test-configmap")
+			Expect(changed).To(BeTrue())
+			Expect(deployment.Spec.Template.Spec.Volumes).To(HaveLen(1))
+			Expect(deployment.Spec.Template.Spec.Volumes[0].Name).To(Equal("test-volume"))
+			Expect(deployment.Spec.Template.Spec.Volumes[0].ConfigMap.Name).To(Equal("test-configmap"))
+
+			// Second call with same params should not change
+			changed = controllerReconciler.ensureConfigMapVolume(deployment, "test-volume", "test-configmap")
+			Expect(changed).To(BeFalse())
+
+			// Call with different configmap name should update
+			changed = controllerReconciler.ensureConfigMapVolume(deployment, "test-volume", "different-configmap")
+			Expect(changed).To(BeTrue())
+			Expect(deployment.Spec.Template.Spec.Volumes[0].ConfigMap.Name).To(Equal("different-configmap"))
+
+			By("Testing ensureConfigMapVolumeMount")
+			container := &corev1.Container{
+				VolumeMounts: []corev1.VolumeMount{},
+			}
+
+			// First call should add mount
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume")
+			Expect(changed).To(BeTrue())
+			Expect(container.VolumeMounts).To(HaveLen(1))
+			Expect(container.VolumeMounts[0].Name).To(Equal("test-volume"))
+			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known/runtime-app-configuration"))
+			Expect(container.VolumeMounts[0].SubPath).To(Equal("runtime-app-configuration"))
+			Expect(container.VolumeMounts[0].ReadOnly).To(BeTrue())
+
+			// Second call with same params should not change
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume")
+			Expect(changed).To(BeFalse())
+
+			// Modify mount and verify it gets corrected
+			container.VolumeMounts[0].ReadOnly = false
+			container.VolumeMounts[0].MountPath = "/wrong/path"
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume")
+			Expect(changed).To(BeTrue())
+			Expect(container.VolumeMounts[0].ReadOnly).To(BeTrue())
+			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known/runtime-app-configuration"))
+		})
+
+		It("should handle deployment not found gracefully", func() {
+			By("Creating component without deployment")
+			component := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-component-no-deployment",
+					Namespace: testNamespace,
+				},
+			}
+			Expect(k8sClient.Create(ctx, component)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, component) }()
+
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-exposer-no-deployment",
+					Namespace: testNamespace,
+				},
+			}
+
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("Attempting to update non-existent deployment")
+			err := controllerReconciler.updateComponentDeployment(ctx, component, exposer, "test-hash", log.FromContext(ctx))
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle self configuration parsing correctly", func() {
+			By("Creating exposer with complex self configuration")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: componentName,
+					SelfConfiguration: &runtime.RawExtension{
+						Raw: []byte(`{
+							"apiUrl": "https://api.example.com",
+							"features": {
+								"enableFeatureA": true,
+								"enableFeatureB": false
+							},
+							"limits": {
+								"maxItems": 100,
+								"timeout": 30
+							}
+						}`),
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying self configuration in ConfigMap")
+			configMap := &corev1.ConfigMap{}
+			configMapName := componentName + "-runtime-app-configuration"
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: testNamespace,
+				}, configMap)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			var runtimeConfig MicroAppRuntimeConfiguration
+			err = json.Unmarshal([]byte(configMap.Data[configMapKey]), &runtimeConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			selfConfig := runtimeConfig.Spec.SelfConfiguration
+			Expect(selfConfig["apiUrl"]).To(Equal("https://api.example.com"))
+
+			features, ok := selfConfig["features"].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(features["enableFeatureA"]).To(Equal(true))
+			Expect(features["enableFeatureB"]).To(Equal(false))
+
+			limits, ok := selfConfig["limits"].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(limits["maxItems"]).To(Equal(float64(100))) // JSON numbers are float64
+			Expect(limits["timeout"]).To(Equal(float64(30)))
 		})
 	})
 })
