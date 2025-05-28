@@ -334,5 +334,71 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond.Reason).To(Equal("ParseFailed"))
 			Expect(cond.Message).To(ContainSubstring("Failed to parse configuration:"))
 		})
+
+		It("should preserve existing volumes and volume mounts during deployment update", func() {
+			By("Creating initial deployment with custom volumes")
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			// First reconcile to create deployment
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Manually adding custom volumes and volume mounts to deployment")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			// Add custom volume and mount
+			deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+				Name: "custom-config",
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: "custom-config-map",
+						},
+					},
+				},
+			})
+
+			deployment.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+				deployment.Spec.Template.Spec.Containers[0].VolumeMounts,
+				corev1.VolumeMount{
+					Name:      "custom-config",
+					MountPath: "/etc/custom-config",
+				},
+			)
+
+			// Add custom annotation
+			deployment.Spec.Template.Annotations = map[string]string{
+				"custom-annotation": "test-value",
+			}
+
+			Expect(k8sClient.Update(ctx, deployment)).To(Succeed())
+
+			By("Reconciling again to verify volumes are preserved")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying custom volumes and mounts are preserved")
+			updatedDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
+
+			// Check volumes
+			Expect(updatedDeployment.Spec.Template.Spec.Volumes).To(HaveLen(1))
+			Expect(updatedDeployment.Spec.Template.Spec.Volumes[0].Name).To(Equal("custom-config"))
+
+			// Check volume mounts
+			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(HaveLen(1))
+			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts[0].Name).To(Equal("custom-config"))
+			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath).To(Equal("/etc/custom-config"))
+
+			// Check annotations
+			Expect(updatedDeployment.Spec.Template.Annotations).To(HaveKey("custom-annotation"))
+			Expect(updatedDeployment.Spec.Template.Annotations["custom-annotation"]).To(Equal("test-value"))
+		})
 	})
 })
