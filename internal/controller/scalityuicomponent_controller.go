@@ -155,35 +155,44 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 				existingVolumeMounts[i] = container.VolumeMounts
 			}
 		}
+		deployment.Labels["app"] = scalityUIComponent.Name
 
-		deployment.Spec = appsv1.DeploymentSpec{
-			Selector: &metav1.LabelSelector{
+		// Set selector if it doesn't exist
+		if deployment.Spec.Selector == nil {
+			deployment.Spec.Selector = &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"app": scalityUIComponent.Name,
 				},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app": scalityUIComponent.Name,
-					},
-					Annotations: existingAnnotations,
-				},
-				Spec: corev1.PodSpec{
-					Volumes: existingVolumes,
-					Containers: []corev1.Container{
-						{
-							Name:  scalityUIComponent.Name,
-							Image: scalityUIComponent.Spec.Image,
-						},
-					},
-				},
-			},
+			}
 		}
 
-		// Restore volume mounts for the main container if they existed
-		if len(existingVolumeMounts) > 0 && len(existingVolumeMounts[0]) > 0 {
-			deployment.Spec.Template.Spec.Containers[0].VolumeMounts = existingVolumeMounts[0]
+		if deployment.Spec.Template.Labels == nil {
+			deployment.Spec.Template.Labels = make(map[string]string)
+		}
+		deployment.Spec.Template.Labels["app"] = scalityUIComponent.Name
+
+		// Preserve existing annotations while allowing new ones
+		if deployment.Spec.Template.Annotations == nil {
+			deployment.Spec.Template.Annotations = make(map[string]string)
+		}
+
+		// Ensure we have at least one container with the correct image
+		containerFound := false
+		for i := range deployment.Spec.Template.Spec.Containers {
+			if deployment.Spec.Template.Spec.Containers[i].Name == scalityUIComponent.Name {
+				// Update the image for the existing container
+				deployment.Spec.Template.Spec.Containers[i].Image = scalityUIComponent.Spec.Image
+				containerFound = true
+				break
+			}
+		}
+
+		// If container doesn't exist, add it
+		if !containerFound {
+			deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, corev1.Container{
+				Name:  scalityUIComponent.Name,
+				Image: scalityUIComponent.Spec.Image,
+			})
 		}
 
 		return nil
