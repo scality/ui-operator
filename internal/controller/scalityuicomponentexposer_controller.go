@@ -82,6 +82,7 @@ type ScalityUIComponentExposerReconciler struct {
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuicomponentexposers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuis,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuis,verbs=get;list;watch,resourceNames=*
+// +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuicomponents,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
 
@@ -106,6 +107,15 @@ type MicroAppRuntimeConfigurationSpec struct {
 	AppHistoryBasePath string                 `json:"appHistoryBasePath,omitempty"`
 	Auth               map[string]interface{} `json:"auth,omitempty"`
 	SelfConfiguration  map[string]interface{} `json:"selfConfiguration,omitempty"`
+}
+
+// DeployedUIApp represents a deployed UI application entry
+type DeployedUIApp struct {
+	AppHistoryBasePath string `json:"appHistoryBasePath"`
+	Kind               string `json:"kind"`
+	Name               string `json:"name"`
+	URL                string `json:"url"`
+	Version            string `json:"version"`
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -176,6 +186,21 @@ func (r *ScalityUIComponentExposerReconciler) Reconcile(ctx context.Context, req
 
 	r.setStatusCondition(exposer, conditionTypeDeploymentReady, metav1.ConditionTrue,
 		reasonReconcileSucceeded, "Deployment successfully updated with ConfigMap mount")
+
+	if err := r.reconcileDeployedUIApps(ctx, ui, component, exposer, logger); err != nil {
+		logger.Error(err, "Failed to reconcile deployed UI apps")
+		r.setStatusCondition(exposer, conditionTypeDeployedAppsReady, metav1.ConditionFalse,
+			reasonReconcileFailed, fmt.Sprintf("Failed to reconcile deployed UI apps: %v", err))
+
+		if updateErr := r.updateStatus(ctx, exposer, logger); updateErr != nil {
+			logger.Error(updateErr, "Failed to update status after deployed UI apps reconciliation failure")
+		}
+
+		return ctrl.Result{RequeueAfter: defaultRequeueInterval}, fmt.Errorf("failed to reconcile deployed UI apps: %w", err)
+	}
+
+	r.setStatusCondition(exposer, conditionTypeDeployedAppsReady, metav1.ConditionTrue,
+		reasonReconcileSucceeded, "Deployed UI apps successfully updated")
 
 	if err := r.updateStatus(ctx, exposer, logger); err != nil {
 		logger.Error(err, "Failed to update status")
@@ -463,6 +488,34 @@ func (r *ScalityUIComponentExposerReconciler) findExposersForScalityUI(ctx conte
 	return requests
 }
 
+// findExposersForScalityUIComponent finds all ScalityUIComponentExposer resources that reference a given ScalityUIComponent
+func (r *ScalityUIComponentExposerReconciler) findExposersForScalityUIComponent(ctx context.Context, obj client.Object) []reconcile.Request {
+	component, ok := obj.(*uiv1alpha1.ScalityUIComponent)
+	if !ok {
+		return nil
+	}
+
+	// List all ScalityUIComponentExposer resources in the same namespace
+	exposerList := &uiv1alpha1.ScalityUIComponentExposerList{}
+	if err := r.List(ctx, exposerList, client.InNamespace(component.Namespace)); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, exposer := range exposerList.Items {
+		if exposer.Spec.ScalityUIComponent == component.Name {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposer.Name,
+					Namespace: exposer.Namespace,
+				},
+			})
+		}
+	}
+
+	return requests
+}
+
 // calculateConfigMapHash calculates the SHA-256 hash of the ConfigMap data
 func (r *ScalityUIComponentExposerReconciler) calculateConfigMapHash(configMap *corev1.ConfigMap) (string, error) {
 	dataToHash, dataKeyExists := configMap.Data[configMapKey]
@@ -610,11 +663,107 @@ func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolumeMount(contain
 	return true
 }
 
+// reconcileDeployedUIApps updates the deployed-ui-apps ConfigMap for ScalityUI
+func (r *ScalityUIComponentExposerReconciler) reconcileDeployedUIApps(
+	ctx context.Context,
+	ui *uiv1alpha1.ScalityUI,
+	component *uiv1alpha1.ScalityUIComponent,
+	exposer *uiv1alpha1.ScalityUIComponentExposer,
+	logger logr.Logger,
+) error {
+	configMapName := fmt.Sprintf("%s-%s", ui.Name, deployedUIAppsConfigMapSuffix)
+	operatorNamespace := getOperatorNamespace()
+
+	// Get the existing ConfigMap created by ScalityUI controller
+	configMap := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      configMapName,
+		Namespace: operatorNamespace,
+	}, configMap)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Deployed UI apps ConfigMap not found, skipping update",
+				"configMap", configMapName,
+				"namespace", operatorNamespace)
+			return nil
+		}
+		return fmt.Errorf("failed to get deployed UI apps ConfigMap: %w", err)
+	}
+
+	logger.Info("Updating deployed UI apps ConfigMap",
+		"configMap", configMapName,
+		"namespace", operatorNamespace)
+
+	// Update the ConfigMap with the new component data
+	if err := r.updateDeployedUIAppsData(configMap, component, exposer); err != nil {
+		return fmt.Errorf("failed to update deployed UI apps data: %w", err)
+	}
+
+	// Update the ConfigMap
+	if err := r.Update(ctx, configMap); err != nil {
+		return fmt.Errorf("failed to update deployed UI apps ConfigMap: %w", err)
+	}
+
+	logger.Info("Successfully updated deployed UI apps ConfigMap",
+		"configMap", configMapName,
+		"namespace", operatorNamespace)
+	return nil
+}
+
+// updateDeployedUIAppsData updates the deployed UI apps data in the ConfigMap
+func (r *ScalityUIComponentExposerReconciler) updateDeployedUIAppsData(
+	configMap *corev1.ConfigMap,
+	component *uiv1alpha1.ScalityUIComponent,
+	exposer *uiv1alpha1.ScalityUIComponentExposer,
+) error {
+	if configMap.Data == nil {
+		configMap.Data = make(map[string]string)
+	}
+
+	var deployedApps []DeployedUIApp
+	if existingData, exists := configMap.Data[deployedUIAppsKey]; exists {
+		if err := json.Unmarshal([]byte(existingData), &deployedApps); err != nil {
+			deployedApps = []DeployedUIApp{}
+		}
+	}
+
+	appEntry := DeployedUIApp{
+		AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
+		Kind:               component.Status.Kind,
+		Name:               component.Name,
+		URL:                component.Status.PublicPath,
+		Version:            component.Status.Version,
+	}
+
+	found := false
+	for i, app := range deployedApps {
+		if app.Name == component.Name {
+			deployedApps[i] = appEntry
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		deployedApps = append(deployedApps, appEntry)
+	}
+
+	deployedAppsJSON, err := json.MarshalIndent(deployedApps, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal deployed UI apps: %w", err)
+	}
+
+	configMap.Data[deployedUIAppsKey] = string(deployedAppsJSON)
+	return nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ScalityUIComponentExposerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uiv1alpha1.ScalityUIComponentExposer{}).
 		Owns(&corev1.ConfigMap{}).
 		Watches(&uiv1alpha1.ScalityUI{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUI)).
+		Watches(&uiv1alpha1.ScalityUIComponent{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUIComponent)).
 		Complete(r)
 }
