@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -37,10 +38,9 @@ import (
 var _ = Describe("ScalityUI Shell Features", func() {
 	Context("When deploying a Scality Shell UI", func() {
 		const (
-			uiAppName       = "test-ui"
-			targetNamespace = "scality-ui" // Resources are deployed in scality-ui namespace
-			productName     = "Test Product"
-			containerImage  = "nginx:latest"
+			uiAppName      = "test-ui"
+			productName    = "Test Product"
+			containerImage = "nginx:latest"
 		)
 
 		ctx := context.Background()
@@ -71,7 +71,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 		AfterEach(func() {
 			By("Cleaning up test resources")
-			cleanupTestResources(ctx, clusterScopedName, targetNamespace)
+			cleanupTestResources(ctx, clusterScopedName)
 		})
 
 		Describe("Basic Shell UI Deployment", func() {
@@ -87,13 +87,13 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying the Shell UI is properly configured")
-				verifyUIApplicationConfiguration(ctx, uiAppName, targetNamespace, productName)
+				verifyUIApplicationConfiguration(ctx, uiAppName, productName)
 
 				By("Verifying the Shell UI is accessible via service")
-				verifyUIApplicationService(ctx, uiAppName, targetNamespace)
+				verifyUIApplicationService(ctx, uiAppName)
 
 				By("Verifying the Shell UI has proper resource ownership")
-				verifyResourceOwnership(ctx, uiAppName, targetNamespace, scalityui.UID)
+				verifyResourceOwnership(ctx, uiAppName, scalityui.UID)
 			})
 		})
 
@@ -153,16 +153,16 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying the Shell UI reflects the custom branding")
-				verifyCustomBranding(ctx, uiAppName, targetNamespace, "Custom Branded Product")
+				verifyCustomBranding(ctx, uiAppName, "Custom Branded Product")
 
 				By("Verifying the custom navigation is configured")
-				verifyCustomNavigation(ctx, uiAppName, targetNamespace)
+				verifyCustomNavigation(ctx, uiAppName)
 
 				By("Verifying the custom themes are applied")
-				verifyCustomThemes(ctx, uiAppName, targetNamespace)
+				verifyCustomThemes(ctx, uiAppName)
 
 				By("Verifying user customization options are enabled")
-				verifyUserCustomizationOptions(ctx, uiAppName, targetNamespace)
+				verifyUserCustomizationOptions(ctx, uiAppName)
 			})
 		})
 
@@ -190,7 +190,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying the shell application is running the new version")
-				verifyApplicationVersion(ctx, uiAppName, targetNamespace, newImage)
+				verifyApplicationVersion(ctx, uiAppName, newImage)
 			})
 		})
 
@@ -314,10 +314,9 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 	Context("When managing Ingress resources", func() {
 		const (
-			resourceName    = "test-ui-ingress"
-			targetNamespace = "scality-ui" // Resources are deployed in scality-ui namespace
-			productName     = "Test UI with Ingress"
-			imageName       = "nginx:latest"
+			resourceName = "test-ui-ingress"
+			productName  = "Test UI with Ingress"
+			imageName    = "nginx:latest"
 		)
 
 		ctx := context.Background()
@@ -334,7 +333,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 			// Clean up Ingress (in target namespace)
 			ingress := &networkingv1.Ingress{}
-			ingressName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+			ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 			err = k8sClient.Get(ctx, ingressName, ingress)
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, ingress)).To(Succeed())
@@ -366,7 +365,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 			By("Verifying that an Ingress is created in the target namespace")
 			ingress := &networkingv1.Ingress{}
-			ingressName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+			ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, ingressName, ingress)
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
@@ -410,7 +409,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 			By("Verifying that an Ingress is created with custom configuration")
 			ingress := &networkingv1.Ingress{}
-			ingressName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+			ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, ingressName, ingress)
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
@@ -451,7 +450,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 			By("Verifying the Ingress routes traffic to the root path")
 			ingress := &networkingv1.Ingress{}
-			ingressName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+			ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, ingressName, ingress)
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
@@ -464,9 +463,37 @@ var _ = Describe("ScalityUI Shell Features", func() {
 	})
 })
 
+var _ = Describe("getOperatorNamespace", func() {
+	It("should return POD_NAMESPACE environment variable when set", func() {
+		// Set the environment variable
+		os.Setenv("POD_NAMESPACE", "test-namespace")
+		defer os.Unsetenv("POD_NAMESPACE")
+
+		namespace := getOperatorNamespace()
+		Expect(namespace).To(Equal("test-namespace"))
+	})
+
+	It("should return default namespace when POD_NAMESPACE is not set", func() {
+		// Ensure POD_NAMESPACE is not set
+		os.Unsetenv("POD_NAMESPACE")
+
+		namespace := getOperatorNamespace()
+		Expect(namespace).To(Equal("scality-ui"))
+	})
+
+	It("should return default namespace when POD_NAMESPACE is empty", func() {
+		// Set POD_NAMESPACE to empty string
+		os.Setenv("POD_NAMESPACE", "")
+		defer os.Unsetenv("POD_NAMESPACE")
+
+		namespace := getOperatorNamespace()
+		Expect(namespace).To(Equal("scality-ui"))
+	})
+})
+
 // Helper functions for test verification - these abstract away implementation details
 
-func cleanupTestResources(ctx context.Context, clusterScopedName types.NamespacedName, targetNamespace string) {
+func cleanupTestResources(ctx context.Context, clusterScopedName types.NamespacedName) {
 	// Clean up ScalityUI resource (cluster-scoped)
 	resource := &uiv1alpha1.ScalityUI{}
 	if err := k8sClient.Get(ctx, clusterScopedName, resource); err == nil {
@@ -477,7 +504,7 @@ func cleanupTestResources(ctx context.Context, clusterScopedName types.Namespace
 	resourceName := clusterScopedName.Name
 
 	configMap := &corev1.ConfigMap{}
-	configMapName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+	configMapName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 	if err := k8sClient.Get(ctx, configMapName, configMap); err == nil {
 		Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
 	}
@@ -485,35 +512,35 @@ func cleanupTestResources(ctx context.Context, clusterScopedName types.Namespace
 	deployedAppsConfigMap := &corev1.ConfigMap{}
 	deployedAppsName := types.NamespacedName{
 		Name:      resourceName + "-deployed-ui-apps",
-		Namespace: targetNamespace,
+		Namespace: getOperatorNamespace(),
 	}
 	if err := k8sClient.Get(ctx, deployedAppsName, deployedAppsConfigMap); err == nil {
 		Expect(k8sClient.Delete(ctx, deployedAppsConfigMap)).To(Succeed())
 	}
 
 	deployment := &appsv1.Deployment{}
-	deploymentName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+	deploymentName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 	if err := k8sClient.Get(ctx, deploymentName, deployment); err == nil {
 		Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 	}
 
 	service := &corev1.Service{}
-	serviceName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+	serviceName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 	if err := k8sClient.Get(ctx, serviceName, service); err == nil {
 		Expect(k8sClient.Delete(ctx, service)).To(Succeed())
 	}
 
 	ingress := &networkingv1.Ingress{}
-	ingressName := types.NamespacedName{Name: resourceName, Namespace: targetNamespace}
+	ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
 	if err := k8sClient.Get(ctx, ingressName, ingress); err == nil {
 		Expect(k8sClient.Delete(ctx, ingress)).To(Succeed())
 	}
 }
 
-func verifyUIApplicationConfiguration(ctx context.Context, appName, namespace, expectedProductName string) {
+func verifyUIApplicationConfiguration(ctx context.Context, appName, expectedProductName string) {
 	configMap := &corev1.ConfigMap{}
 	Eventually(func() error {
-		return k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)
+		return k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, configMap)
 	}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 	Expect(configMap.Data).To(HaveKey("config.json"))
@@ -526,16 +553,16 @@ func verifyUIApplicationConfiguration(ctx context.Context, appName, namespace, e
 	// Verify deployed apps configuration exists
 	deployedAppsConfigMap := &corev1.ConfigMap{}
 	Eventually(func() error {
-		return k8sClient.Get(ctx, types.NamespacedName{Name: appName + "-deployed-ui-apps", Namespace: namespace}, deployedAppsConfigMap)
+		return k8sClient.Get(ctx, types.NamespacedName{Name: appName + "-deployed-ui-apps", Namespace: getOperatorNamespace()}, deployedAppsConfigMap)
 	}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 	Expect(deployedAppsConfigMap.Data).To(HaveKeyWithValue("deployed-ui-apps.json", "[]"))
 }
 
-func verifyUIApplicationService(ctx context.Context, appName, namespace string) {
+func verifyUIApplicationService(ctx context.Context, appName string) {
 	service := &corev1.Service{}
 	Eventually(func() error {
-		return k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, service)
+		return k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, service)
 	}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 	Expect(service.Spec.Selector).To(HaveKeyWithValue("app", appName))
@@ -545,30 +572,30 @@ func verifyUIApplicationService(ctx context.Context, appName, namespace string) 
 	Expect(service.Spec.Ports[0].Port).To(Equal(int32(80)))
 }
 
-func verifyResourceOwnership(ctx context.Context, appName, namespace string, ownerUID types.UID) {
+func verifyResourceOwnership(ctx context.Context, appName string, ownerUID types.UID) {
 	// Verify ConfigMap ownership
 	configMap := &corev1.ConfigMap{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)).To(Succeed())
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, configMap)).To(Succeed())
 	Expect(configMap.OwnerReferences).NotTo(BeEmpty())
 	Expect(configMap.OwnerReferences[0].UID).To(Equal(ownerUID))
 
 	// Verify Deployment ownership
 	deployment := &appsv1.Deployment{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, deployment)).To(Succeed())
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, deployment)).To(Succeed())
 	Expect(deployment.OwnerReferences).NotTo(BeEmpty())
 	Expect(deployment.OwnerReferences[0].UID).To(Equal(ownerUID))
 
 	// Verify Service ownership
 	service := &corev1.Service{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, service)).To(Succeed())
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, service)).To(Succeed())
 	Expect(service.OwnerReferences).NotTo(BeEmpty())
 	Expect(service.OwnerReferences[0].UID).To(Equal(ownerUID))
 }
 
-func verifyCustomBranding(ctx context.Context, appName, namespace, expectedProductName string) {
+func verifyCustomBranding(ctx context.Context, appName, expectedProductName string) {
 	configMap := &corev1.ConfigMap{}
 	Eventually(func() bool {
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, configMap)
 		if err != nil {
 			return false
 		}
@@ -582,9 +609,9 @@ func verifyCustomBranding(ctx context.Context, appName, namespace, expectedProdu
 	// Custom branding is now handled through themes, not separate favicon/logo fields
 }
 
-func verifyCustomNavigation(ctx context.Context, appName, namespace string) {
+func verifyCustomNavigation(ctx context.Context, appName string) {
 	configMap := &corev1.ConfigMap{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)).To(Succeed())
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, configMap)).To(Succeed())
 
 	var config map[string]interface{}
 	Expect(json.Unmarshal([]byte(configMap.Data["config.json"]), &config)).To(Succeed())
@@ -601,9 +628,9 @@ func verifyCustomNavigation(ctx context.Context, appName, namespace string) {
 	Expect(subLoginNav[0].(map[string]interface{})["view"]).To(Equal("user-profile"))
 }
 
-func verifyCustomThemes(ctx context.Context, appName, namespace string) {
+func verifyCustomThemes(ctx context.Context, appName string) {
 	configMap := &corev1.ConfigMap{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)).To(Succeed())
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, configMap)).To(Succeed())
 
 	var config map[string]interface{}
 	Expect(json.Unmarshal([]byte(configMap.Data["config.json"]), &config)).To(Succeed())
@@ -617,9 +644,9 @@ func verifyCustomThemes(ctx context.Context, appName, namespace string) {
 	Expect(darkTheme["logoPath"]).To(Equal("/assets/dark-logo.png"))
 }
 
-func verifyUserCustomizationOptions(ctx context.Context, appName, namespace string) {
+func verifyUserCustomizationOptions(ctx context.Context, appName string) {
 	configMap := &corev1.ConfigMap{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, configMap)).To(Succeed())
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, configMap)).To(Succeed())
 
 	var config map[string]interface{}
 	Expect(json.Unmarshal([]byte(configMap.Data["config.json"]), &config)).To(Succeed())
@@ -631,10 +658,10 @@ func verifyUserCustomizationOptions(ctx context.Context, appName, namespace stri
 	Expect(config).To(HaveKey("themes"))
 }
 
-func verifyApplicationVersion(ctx context.Context, appName, namespace, expectedImage string) {
+func verifyApplicationVersion(ctx context.Context, appName, expectedImage string) {
 	deployment := &appsv1.Deployment{}
 	Eventually(func() string {
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, deployment)
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, deployment)
 		if err != nil {
 			return ""
 		}
