@@ -231,12 +231,10 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 				Expect(lightTheme["type"]).To(Equal("core-ui"))
 				Expect(lightTheme["name"]).To(Equal("artescaLight"))
-				Expect(lightTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
-				Expect(lightTheme["logo"].(map[string]interface{})["value"]).To(Equal(""))
+				Expect(lightTheme["logoPath"]).To(Equal(""))
 				Expect(darkTheme["type"]).To(Equal("core-ui"))
 				Expect(darkTheme["name"]).To(Equal("darkRebrand"))
-				Expect(darkTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
-				Expect(darkTheme["logo"].(map[string]interface{})["value"]).To(Equal(""))
+				Expect(darkTheme["logoPath"]).To(Equal(""))
 			})
 
 			It("should generate shell configuration with custom business requirements", func() {
@@ -307,11 +305,9 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				lightTheme := themes["light"].(map[string]interface{})
 				darkTheme := themes["dark"].(map[string]interface{})
 				Expect(lightTheme["name"]).To(Equal("corporateLight"))
-				Expect(lightTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
-				Expect(lightTheme["logo"].(map[string]interface{})["value"]).To(Equal("/branding/light.svg"))
+				Expect(lightTheme["logoPath"]).To(Equal("/branding/light.svg"))
 				Expect(darkTheme["name"]).To(Equal("corporateDark"))
-				Expect(darkTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
-				Expect(darkTheme["logo"].(map[string]interface{})["value"]).To(Equal("/branding/dark.svg"))
+				Expect(darkTheme["logoPath"]).To(Equal("/branding/dark.svg"))
 			})
 		})
 	})
@@ -616,11 +612,9 @@ func verifyCustomThemes(ctx context.Context, appName, namespace string) {
 	lightTheme := themes["light"].(map[string]interface{})
 	darkTheme := themes["dark"].(map[string]interface{})
 	Expect(lightTheme["name"]).To(Equal("companyLight"))
-	Expect(lightTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
-	Expect(lightTheme["logo"].(map[string]interface{})["value"]).To(Equal("/assets/light-logo.png"))
+	Expect(lightTheme["logoPath"]).To(Equal("/assets/light-logo.png"))
 	Expect(darkTheme["name"]).To(Equal("companyDark"))
-	Expect(darkTheme["logo"].(map[string]interface{})["type"]).To(Equal("path"))
-	Expect(darkTheme["logo"].(map[string]interface{})["value"]).To(Equal("/assets/dark-logo.png"))
+	Expect(darkTheme["logoPath"]).To(Equal("/assets/dark-logo.png"))
 }
 
 func verifyUserCustomizationOptions(ctx context.Context, appName, namespace string) {
