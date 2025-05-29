@@ -722,9 +722,9 @@ func (r *ScalityUIComponentExposerReconciler) updateDeployedUIAppsData(
 	}
 
 	var deployedApps []DeployedUIApp
-	if existingData, exists := configMap.Data[deployedUIAppsKey]; exists {
+	if existingData, exists := configMap.Data[deployedUIAppsKey]; exists && strings.TrimSpace(existingData) != "" {
 		if err := json.Unmarshal([]byte(existingData), &deployedApps); err != nil {
-			deployedApps = []DeployedUIApp{}
+			return fmt.Errorf("failed to unmarshal existing deployed UI apps data from key '%s' in ConfigMap '%s/%s': %w", deployedUIAppsKey, configMap.Namespace, configMap.Name, err)
 		}
 	}
 
