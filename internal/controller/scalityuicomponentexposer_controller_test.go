@@ -1138,16 +1138,18 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
 		})
 
-		It("should handle malformed deployed UI apps data", func() {
+		It("should handle malformed deployed UI apps data and report failure", func() {
 			By("Creating deployed UI apps ConfigMap with malformed data")
-			operatorNamespace := "scality-ui" // Use fixed namespace for tests
+			operatorNamespace := "scality-ui"
+			malformedJSONData := "invalid json data"
+			deployedAppsConfigMapName := uiName + "-deployed-ui-apps"
 			deployedAppsConfigMap := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      uiName + "-deployed-ui-apps",
+					Name:      deployedAppsConfigMapName,
 					Namespace: operatorNamespace,
 				},
 				Data: map[string]string{
-					"deployed-ui-apps.json": "invalid json data",
+					deployedUIAppsKey: malformedJSONData,
 				},
 			}
 			Expect(k8sClient.Create(ctx, deployedAppsConfigMap)).To(Succeed())
@@ -1155,6 +1157,10 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 
 			By("Creating exposer")
 			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: uiv1alpha1.GroupVersion.String(),
+					Kind:       "ScalityUIComponentExposer",
+				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      exposerName,
 					Namespace: testNamespace,
@@ -1167,7 +1173,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
 
-			By("Reconciling the resource")
+			By("Reconciling the resource with malformed ConfigMap data")
 			controllerReconciler := &ScalityUIComponentExposerReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
@@ -1176,23 +1182,27 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to reconcile deployed UI apps"))
+			Expect(err.Error()).To(ContainSubstring("failed to unmarshal existing deployed UI apps data"))
 
-			By("Verifying ConfigMap was reset with valid data")
-			updatedConfigMap := &corev1.ConfigMap{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      uiName + "-deployed-ui-apps",
-					Namespace: operatorNamespace,
-				}, updatedConfigMap)
-				if err != nil {
-					return false
-				}
+			By("Verifying ConfigMap data remains unchanged (still malformed)")
+			fetchedCm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      deployedAppsConfigMapName,
+				Namespace: operatorNamespace,
+			}, fetchedCm)).To(Succeed())
+			Expect(fetchedCm.Data[deployedUIAppsKey]).To(Equal(malformedJSONData))
 
-				var deployedApps []DeployedUIApp
-				err = json.Unmarshal([]byte(updatedConfigMap.Data["deployed-ui-apps.json"]), &deployedApps)
-				return err == nil && len(deployedApps) == 1 && deployedApps[0].Name == componentName
-			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+			By("Checking status condition indicates failure for DeployedAppsReady")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedExposer)).To(Succeed())
+
+			deployedAppsCond := meta.FindStatusCondition(updatedExposer.Status.Conditions, conditionTypeDeployedAppsReady)
+			Expect(deployedAppsCond).NotTo(BeNil())
+			Expect(deployedAppsCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(deployedAppsCond.Reason).To(Equal(reasonReconcileFailed))
+			Expect(deployedAppsCond.Message).To(ContainSubstring("failed to unmarshal existing deployed UI apps data"))
 		})
 
 		It("should trigger reconciliation when ScalityUIComponent status changes", func() {
