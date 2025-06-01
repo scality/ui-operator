@@ -29,11 +29,14 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/go-logr/logr"
 	uiscalitycomv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
@@ -41,7 +44,18 @@ import (
 
 const (
 	uiServicePort = 80
+	// Deployed UI apps constants
+	deployedUIAppsKey = "deployed-ui-apps.json"
 )
+
+// DeployedUIApp represents a deployed UI application entry
+type DeployedUIApp struct {
+	AppHistoryBasePath string `json:"appHistoryBasePath"`
+	Kind               string `json:"kind"`
+	Name               string `json:"name"`
+	URL                string `json:"url"`
+	Version            string `json:"version"`
+}
 
 // getOperatorNamespace returns the namespace where the operator is deployed.
 // It reads from the POD_NAMESPACE environment variable, which should be set
@@ -455,6 +469,8 @@ type ScalityUIReconciler struct {
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuis,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuis/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuis/finalizers,verbs=update
+// +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuicomponentexposers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuicomponents,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
@@ -496,6 +512,12 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	h.Write(configJSON)
 	configHash := fmt.Sprintf("%x", h.Sum(nil))
 
+	// Reconcile deployed-ui-apps ConfigMap by collecting all exposers that reference this UI
+	if err := r.reconcileDeployedUIApps(ctx, scalityui); err != nil {
+		r.Log.Error(err, "Failed to reconcile deployed UI apps")
+		return ctrl.Result{}, err
+	}
+
 	// Calculate hash of deployed-ui-apps ConfigMap
 	deployedAppsHash, err := r.calculateDeployedAppsHash(ctx, scalityui)
 	if err != nil {
@@ -521,42 +543,6 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	logOperationResult(r.Log, configMapResult, "ConfigMap config.json", configMap.Name)
-
-	// Define and manage ConfigMap for deployed-ui-apps.json
-	configMapDeployedAppsName := scalityui.Name + "-deployed-ui-apps"
-	configMapDeployedApps := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapDeployedAppsName,
-			Namespace: getOperatorNamespace(),
-		},
-	}
-
-	// Use CreateOrUpdate to ensure the ConfigMap exists and has the correct owner reference.
-	// The data for "deployed-ui-apps.json" should only be initialized if it's missing.
-	opResultDeployedApps, err := controllerutil.CreateOrUpdate(ctx, r.Client, configMapDeployedApps, func() error {
-		if err := controllerutil.SetControllerReference(scalityui, configMapDeployedApps, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set owner reference on ConfigMap %s/%s: %w", configMapDeployedApps.Namespace, configMapDeployedApps.Name, err)
-		}
-
-		// Initialize Data map if nil
-		if configMapDeployedApps.Data == nil {
-			configMapDeployedApps.Data = make(map[string]string)
-		}
-
-		// Only set "deployed-ui-apps.json" if it doesn't already exist.
-		// This allows other controllers (like ScalityUIComponentExposerReconciler) to manage its content.
-		if _, ok := configMapDeployedApps.Data["deployed-ui-apps.json"]; !ok {
-			configMapDeployedApps.Data["deployed-ui-apps.json"] = "[]" // Default to empty JSON array
-		}
-		return nil
-	})
-
-	if err != nil {
-		r.Log.Error(err, "Failed to create or update ConfigMap for deployed-ui-apps.json", "name", configMapDeployedApps.Name)
-		return ctrl.Result{}, err
-	}
-
-	logOperationResult(r.Log, opResultDeployedApps, "ConfigMap deployed-ui-apps.json", configMapDeployedApps.Name)
 
 	// Define Deployment
 	deploy := &appsv1.Deployment{
@@ -650,6 +636,7 @@ func (r *ScalityUIReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.Ingress{}).
+		Watches(&uiscalitycomv1alpha1.ScalityUIComponentExposer{}, handler.EnqueueRequestsFromMapFunc(r.findUIForExposer)).
 		Complete(r)
 }
 
@@ -693,5 +680,125 @@ func logOperationResult(logger logr.Logger, result controllerutil.OperationResul
 		logger.Info(fmt.Sprintf("%s unchanged", resourceType), "name", resourceName)
 	default:
 		logger.Info(fmt.Sprintf("%s status", resourceType), "name", resourceName, "result", result)
+	}
+}
+
+// reconcileDeployedUIApps reconciles the deployed-ui-apps ConfigMap based on all exposers that reference this UI
+func (r *ScalityUIReconciler) reconcileDeployedUIApps(ctx context.Context, scalityui *uiscalitycomv1alpha1.ScalityUI) error {
+	logger := r.Log.WithValues("ui", scalityui.Name)
+
+	// Find all exposers that reference this UI
+	exposers, err := r.findAllExposersForUI(ctx, scalityui.Name)
+	if err != nil {
+		return fmt.Errorf("failed to find exposers for UI %s: %w", scalityui.Name, err)
+	}
+
+	// Build the deployed apps list
+	deployedApps := []DeployedUIApp{}
+	for _, exposer := range exposers {
+		component, err := r.getComponentForExposer(ctx, &exposer)
+		if err != nil {
+			logger.Error(err, "Failed to get component for exposer",
+				"exposer", exposer.Name, "component", exposer.Spec.ScalityUIComponent)
+			continue // Skip this exposer but continue with others
+		}
+
+		// Only include if component has valid status information
+		if component.Status.Kind != "" && component.Status.PublicPath != "" {
+			deployedApp := DeployedUIApp{
+				AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
+				Kind:               component.Status.Kind,
+				Name:               component.Name,
+				URL:                component.Status.PublicPath,
+				Version:            component.Status.Version,
+			}
+			deployedApps = append(deployedApps, deployedApp)
+		}
+	}
+
+	// Create or update the deployed-ui-apps ConfigMap
+	configMapName := scalityui.Name + "-deployed-ui-apps"
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      configMapName,
+			Namespace: getOperatorNamespace(),
+		},
+	}
+
+	deployedAppsJSON, err := json.MarshalIndent(deployedApps, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal deployed UI apps: %w", err)
+	}
+
+	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, configMap, func() error {
+		if err := controllerutil.SetControllerReference(scalityui, configMap, r.Scheme); err != nil {
+			return fmt.Errorf("failed to set controller reference: %w", err)
+		}
+
+		if configMap.Data == nil {
+			configMap.Data = make(map[string]string)
+		}
+		configMap.Data[deployedUIAppsKey] = string(deployedAppsJSON)
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create or update deployed-ui-apps ConfigMap: %w", err)
+	}
+
+	logOperationResult(r.Log, result, "ConfigMap deployed-ui-apps", configMapName)
+	logger.Info("Successfully reconciled deployed UI apps",
+		"appsCount", len(deployedApps), "configMap", configMapName)
+
+	return nil
+}
+
+// findAllExposersForUI finds all ScalityUIComponentExposer resources that reference the given UI
+func (r *ScalityUIReconciler) findAllExposersForUI(ctx context.Context, uiName string) ([]uiscalitycomv1alpha1.ScalityUIComponentExposer, error) {
+	exposerList := &uiscalitycomv1alpha1.ScalityUIComponentExposerList{}
+	if err := r.List(ctx, exposerList); err != nil {
+		return nil, fmt.Errorf("failed to list exposers: %w", err)
+	}
+
+	var result []uiscalitycomv1alpha1.ScalityUIComponentExposer
+	for _, exposer := range exposerList.Items {
+		if exposer.Spec.ScalityUI == uiName {
+			result = append(result, exposer)
+		}
+	}
+
+	return result, nil
+}
+
+// getComponentForExposer retrieves the ScalityUIComponent referenced by an exposer
+func (r *ScalityUIReconciler) getComponentForExposer(ctx context.Context, exposer *uiscalitycomv1alpha1.ScalityUIComponentExposer) (*uiscalitycomv1alpha1.ScalityUIComponent, error) {
+	component := &uiscalitycomv1alpha1.ScalityUIComponent{}
+	componentKey := types.NamespacedName{
+		Name:      exposer.Spec.ScalityUIComponent,
+		Namespace: exposer.Namespace,
+	}
+
+	if err := r.Get(ctx, componentKey, component); err != nil {
+		return nil, fmt.Errorf("failed to get component %s in namespace %s: %w",
+			exposer.Spec.ScalityUIComponent, exposer.Namespace, err)
+	}
+
+	return component, nil
+}
+
+// findUIForExposer is a mapper function for watch events from ScalityUIComponentExposer
+func (r *ScalityUIReconciler) findUIForExposer(ctx context.Context, obj client.Object) []reconcile.Request {
+	exposer, ok := obj.(*uiscalitycomv1alpha1.ScalityUIComponentExposer)
+	if !ok {
+		return nil
+	}
+
+	// Return a reconcile request for the referenced ScalityUI
+	return []reconcile.Request{
+		{
+			NamespacedName: types.NamespacedName{
+				Name: exposer.Spec.ScalityUI,
+			},
+		},
 	}
 }

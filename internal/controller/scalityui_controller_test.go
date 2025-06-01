@@ -194,6 +194,65 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			})
 		})
 
+		Describe("Deployed UI Apps Management", func() {
+			It("should update deployed-ui-apps ConfigMap when exposers are added", func() {
+				By("Deploying the Shell UI and verifying initial empty state")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying deployed-ui-apps ConfigMap starts empty")
+				verifyDeployedUIAppsContent(ctx, uiAppName, []map[string]interface{}{})
+
+				By("Creating minimal test resources for exposer scenario")
+				testNamespace := "test-deployed-apps"
+				ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}
+				Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+				defer k8sClient.Delete(ctx, ns)
+
+				// Create component with minimal required status
+				component := &uiv1alpha1.ScalityUIComponent{
+					ObjectMeta: metav1.ObjectMeta{Name: "test-component", Namespace: testNamespace},
+					Spec:       uiv1alpha1.ScalityUIComponentSpec{Image: "test:1.0.0"},
+				}
+				Expect(k8sClient.Create(ctx, component)).To(Succeed())
+				component.Status = uiv1alpha1.ScalityUIComponentStatus{
+					Kind: "micro-app", PublicPath: "/apps/test-component", Version: "1.0.0",
+				}
+				Expect(k8sClient.Status().Update(ctx, component)).To(Succeed())
+				defer k8sClient.Delete(ctx, component)
+
+				// Create exposer that references our UI
+				exposer := &uiv1alpha1.ScalityUIComponentExposer{
+					ObjectMeta: metav1.ObjectMeta{Name: "test-exposer", Namespace: testNamespace},
+					Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+						ScalityUI: uiAppName, ScalityUIComponent: "test-component", AppHistoryBasePath: "/test-app",
+					},
+				}
+				Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+				defer k8sClient.Delete(ctx, exposer)
+
+				By("Reconciling to trigger deployed-ui-apps update")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying deployed-ui-apps ConfigMap now contains the app")
+				verifyDeployedUIAppsContent(ctx, uiAppName, []map[string]interface{}{
+					{
+						"appHistoryBasePath": "/test-app",
+						"kind":               "micro-app",
+						"name":               "test-component",
+						"url":                "/apps/test-component",
+						"version":            "1.0.0",
+					},
+				})
+			})
+		})
+
 		Describe("Shell Configuration Management", func() {
 			It("should generate proper default shell configuration for new deployments", func() {
 				testUI := &uiv1alpha1.ScalityUI{
@@ -670,4 +729,17 @@ func verifyApplicationVersion(ctx context.Context, appName, expectedImage string
 		}
 		return ""
 	}, time.Second*10, time.Millisecond*250).Should(Equal(expectedImage))
+}
+
+func verifyDeployedUIAppsContent(ctx context.Context, appName string, expectedContent []map[string]interface{}) {
+	configMap := &corev1.ConfigMap{}
+	Eventually(func() error {
+		return k8sClient.Get(ctx, types.NamespacedName{Name: appName + "-deployed-ui-apps", Namespace: getOperatorNamespace()}, configMap)
+	}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+	Expect(configMap.Data).To(HaveKey("deployed-ui-apps.json"))
+
+	var content []map[string]interface{}
+	Expect(json.Unmarshal([]byte(configMap.Data["deployed-ui-apps.json"]), &content)).To(Succeed())
+	Expect(content).To(Equal(expectedContent))
 }
