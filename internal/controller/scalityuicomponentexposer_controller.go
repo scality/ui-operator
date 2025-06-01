@@ -69,7 +69,6 @@ const (
 	// Mount and deployment related constants
 	configHashAnnotation = "ui.scality.com/config-hash"
 	volumeNamePrefix     = "config-volume-"
-	mountPath            = "/usr/share/nginx/html/.well-known/runtime-app-configuration"
 )
 
 // ScalityUIComponentExposerReconciler reconciles a ScalityUIComponentExposer object
@@ -510,7 +509,7 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(
 
 		// Update or add the ConfigMap volume mount for each container
 		for i := range deployment.Spec.Template.Spec.Containers {
-			configChanged = r.ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName) || configChanged
+			configChanged = r.ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName, component.Spec.RuntimeAppConfigurationPath) || configChanged
 		}
 
 		// Set annotation to trigger rolling update if configuration changed or hash is different
@@ -582,7 +581,7 @@ func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolume(deployment *
 
 // ensureConfigMapVolumeMount ensures the container has the specified volume mount
 // Returns true if the mount was added or modified
-func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolumeMount(container *corev1.Container, volumeName string) bool {
+func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolumeMount(container *corev1.Container, volumeName, mountPath string) bool {
 	// Check for existing mount and update if needed
 	for i, mount := range container.VolumeMounts {
 		if mount.Name == volumeName {
