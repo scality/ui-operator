@@ -79,7 +79,8 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
-					Image: "scality/component:latest",
+					Image:                       "scality/component:latest",
+					RuntimeAppConfigurationPath: "/usr/share/nginx/html/.well-known/runtime-app-configuration",
 				},
 			}
 			Expect(k8sClient.Create(ctx, component)).To(Succeed())
@@ -200,7 +201,8 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
-					Image: "scality/component:latest",
+					Image:                       "scality/component:latest",
+					RuntimeAppConfigurationPath: "/usr/share/nginx/html/.well-known/runtime-app-configuration",
 				},
 			}
 			Expect(k8sClient.Create(ctx, componentNoAuth)).To(Succeed())
@@ -636,6 +638,9 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Name:      "test-component-mount",
 					Namespace: testNamespace,
 				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					RuntimeAppConfigurationPath: "/usr/share/nginx/html/.well-known/runtime-app-configuration",
+				},
 				Status: uiv1alpha1.ScalityUIComponentStatus{
 					Kind: "test-kind",
 				},
@@ -759,7 +764,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}
 
 			// First call should add mount
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/runtime-app-configuration")
 			Expect(changed).To(BeTrue())
 			Expect(container.VolumeMounts).To(HaveLen(1))
 			Expect(container.VolumeMounts[0].Name).To(Equal("test-volume"))
@@ -768,13 +773,13 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(container.VolumeMounts[0].ReadOnly).To(BeTrue())
 
 			// Second call with same params should not change
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/runtime-app-configuration")
 			Expect(changed).To(BeFalse())
 
 			// Modify mount and verify it gets corrected
 			container.VolumeMounts[0].ReadOnly = false
 			container.VolumeMounts[0].MountPath = "/wrong/path"
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/runtime-app-configuration")
 			Expect(changed).To(BeTrue())
 			Expect(container.VolumeMounts[0].ReadOnly).To(BeTrue())
 			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known/runtime-app-configuration"))
@@ -786,6 +791,9 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-component-no-deployment",
 					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					RuntimeAppConfigurationPath: "/usr/share/nginx/html/.well-known/runtime-app-configuration",
 				},
 			}
 			Expect(k8sClient.Create(ctx, component)).To(Succeed())

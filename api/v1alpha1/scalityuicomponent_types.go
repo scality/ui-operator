@@ -28,6 +28,9 @@ type ScalityUIComponentSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 	Image string `json:"image"`
+
+	// RuntimeAppConfigurationPath is the path to the runtime app configuration file
+	RuntimeAppConfigurationPath string `json:"runtimeAppConfigurationPath"`
 }
 
 // ScalityUIComponentStatus defines the observed state of ScalityUIComponent
