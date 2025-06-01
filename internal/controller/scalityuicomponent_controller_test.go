@@ -63,6 +63,14 @@ func (m *MockConfigFetcher) FetchConfig(ctx context.Context, namespace, serviceN
 	return m.ConfigContent, nil
 }
 
+// Helper function to verify OwnerReference
+func verifyOwnerReference(obj metav1.Object, ownerKind, ownerName string) {
+	Expect(obj.GetOwnerReferences()).To(HaveLen(1))
+	Expect(obj.GetOwnerReferences()[0].Kind).To(Equal(ownerKind))
+	Expect(obj.GetOwnerReferences()[0].Name).To(Equal(ownerName))
+	Expect(*obj.GetOwnerReferences()[0].Controller).To(BeTrue())
+}
+
 var _ = Describe("ScalityUIComponent Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
@@ -99,20 +107,8 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Cleanup associated Deployment and Service as well
-			deployment := &appsv1.Deployment{}
-			_ = k8sClient.Get(ctx, typeNamespacedName, deployment) // Ignore error if not found
-			if deployment.Name != "" {
-				Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
-			}
-
-			service := &corev1.Service{}
-			_ = k8sClient.Get(ctx, typeNamespacedName, service) // Ignore error if not found
-			if service.Name != "" {
-				Expect(k8sClient.Delete(ctx, service)).To(Succeed())
-			}
-
 			By("Cleanup the specific resource instance ScalityUIComponent")
+			// With SetControllerReference, Deployment and Service will be automatically cleaned up
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 
@@ -140,6 +136,9 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(deployment.Spec.Template.ObjectMeta.Labels["app"]).To(Equal(resourceName))
 			Expect(deployment.Spec.Selector.MatchLabels["app"]).To(Equal(resourceName))
 
+			By("Checking if Deployment has correct OwnerReference")
+			verifyOwnerReference(deployment, "ScalityUIComponent", resourceName)
+
 			By("Checking if Service was created with correct specifications")
 			service := &corev1.Service{}
 			err = k8sClient.Get(ctx, typeNamespacedName, service)
@@ -150,6 +149,9 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(service.Spec.Ports[0].Name).To(Equal("http"))
 			Expect(service.Spec.Ports[0].Protocol).To(Equal(corev1.ProtocolTCP))
 			Expect(service.Spec.Ports[0].Port).To(Equal(int32(80)))
+
+			By("Checking if Service has correct OwnerReference")
+			verifyOwnerReference(service, "ScalityUIComponent", resourceName)
 		})
 
 		It("should requeue if Deployment is not ready", func() {
@@ -314,6 +316,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			deployment := &appsv1.Deployment{}
 			Eventually(func() error { return k8sClient.Get(ctx, typeNamespacedName, deployment) }, time.Second*5, time.Millisecond*250).Should(Succeed())
+
 			deployment.Status.ReadyReplicas = 1
 			deployment.Status.Replicas = 1
 			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())

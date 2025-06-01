@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
@@ -138,6 +139,11 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	deploymentResult, err := ctrl.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+		// Set the ScalityUIComponent as the owner of this Deployment
+		if err := controllerutil.SetControllerReference(scalityUIComponent, deployment, r.Scheme); err != nil {
+			return err
+		}
+
 		deployment.Spec = appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
@@ -179,6 +185,11 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	serviceResult, err := ctrl.CreateOrUpdate(ctx, r.Client, service, func() error {
+		// Set the ScalityUIComponent as the owner of this Service
+		if err := controllerutil.SetControllerReference(scalityUIComponent, service, r.Scheme); err != nil {
+			return err
+		}
+
 		service.Spec = corev1.ServiceSpec{
 			Selector: map[string]string{
 				"app": scalityUIComponent.Name,
