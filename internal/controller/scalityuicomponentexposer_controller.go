@@ -27,6 +27,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,6 +54,7 @@ const (
 	conditionTypeConfigMapReady    = "ConfigMapReady"
 	conditionTypeDependenciesReady = "DependenciesReady"
 	conditionTypeDeploymentReady   = "DeploymentReady"
+	conditionTypeIngressReady      = "IngressReady"
 
 	// Condition reasons
 	reasonReconcileSucceeded = "ReconcileSucceeded"
@@ -73,6 +75,13 @@ const (
 	// Finalizers
 	exposerFinalizer         = "uicomponentexposer.scality.com/finalizer"
 	configMapFinalizerPrefix = "uicomponentexposer.scality.com/"
+	// Ingress related constants
+	ingressNameSuffix  = "ingress"
+	defaultServicePort = 80
+)
+
+var (
+	pathTypePrefix = networkingv1.PathTypePrefix
 )
 
 // ScalityUIComponentExposerReconciler reconciles a ScalityUIComponentExposer object
@@ -89,6 +98,7 @@ type ScalityUIComponentExposerReconciler struct {
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuicomponents,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 
 // MicroAppRuntimeConfiguration represents the runtime configuration structure
 type MicroAppRuntimeConfiguration struct {
@@ -213,6 +223,22 @@ func (r *ScalityUIComponentExposerReconciler) Reconcile(ctx context.Context, req
 
 	r.setStatusCondition(exposer, conditionTypeDeploymentReady, metav1.ConditionTrue,
 		reasonReconcileSucceeded, "Deployment successfully updated with ConfigMap mount")
+
+	// Reconcile Ingress
+	if err := r.reconcileIngress(ctx, exposer, ui, component, logger); err != nil {
+		logger.Error(err, "Failed to reconcile Ingress")
+		r.setStatusCondition(exposer, conditionTypeIngressReady, metav1.ConditionFalse,
+			reasonReconcileFailed, fmt.Sprintf("Failed to reconcile Ingress: %v", err))
+
+		if updateErr := r.updateStatus(ctx, exposer, logger); updateErr != nil {
+			logger.Error(updateErr, "Failed to update status after Ingress reconciliation failure")
+		}
+
+		return ctrl.Result{RequeueAfter: defaultRequeueInterval}, fmt.Errorf("failed to reconcile Ingress: %w", err)
+	}
+
+	r.setStatusCondition(exposer, conditionTypeIngressReady, metav1.ConditionTrue,
+		reasonReconcileSucceeded, "Ingress successfully created/updated")
 
 	if err := r.updateStatus(ctx, exposer, logger); err != nil {
 		logger.Error(err, "Failed to update status")
@@ -749,11 +775,130 @@ func (r *ScalityUIComponentExposerReconciler) finalizeExposer(
 	return nil
 }
 
+// reconcileIngress reconciles the Ingress for a ScalityUIComponentExposer
+func (r *ScalityUIComponentExposerReconciler) reconcileIngress(
+	ctx context.Context,
+	exposer *uiv1alpha1.ScalityUIComponentExposer,
+	ui *uiv1alpha1.ScalityUI,
+	component *uiv1alpha1.ScalityUIComponent,
+	logger logr.Logger,
+) error {
+	// Get network configuration (exposer takes precedence over UI)
+	networks := r.getNetworkConfig(exposer, ui)
+	if networks == nil || networks.Host == "" {
+		logger.Info("No network configuration found, skipping Ingress creation")
+		return nil
+	}
+
+	ingressName := fmt.Sprintf("%s-%s", exposer.Name, ingressNameSuffix)
+
+	ingress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ingressName,
+			Namespace: exposer.Namespace,
+		},
+	}
+
+	logger.Info("Reconciling Ingress", "ingress", ingressName)
+
+	result, err := ctrl.CreateOrUpdate(ctx, r.Client, ingress, func() error {
+		if err := controllerutil.SetControllerReference(exposer, ingress, r.Scheme); err != nil {
+			return fmt.Errorf("failed to set controller reference: %w", err)
+		}
+
+		return r.updateIngressSpec(ingress, networks, component)
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create or update Ingress: %w", err)
+	}
+
+	logger.Info("Successfully reconciled Ingress",
+		"ingress", ingressName, "operation", result)
+	return nil
+}
+
+// getNetworkConfig returns the network configuration, preferring exposer config over UI config
+func (r *ScalityUIComponentExposerReconciler) getNetworkConfig(
+	exposer *uiv1alpha1.ScalityUIComponentExposer,
+	ui *uiv1alpha1.ScalityUI,
+) *uiv1alpha1.UINetworks {
+	// Priority: exposer.spec.networks > ui.spec.networks
+	if exposer.Spec.Networks != nil {
+		return exposer.Spec.Networks
+	}
+	if ui.Spec.Networks.Host != "" {
+		return &ui.Spec.Networks
+	}
+	return nil
+}
+
+// updateIngressSpec updates the Ingress specification
+func (r *ScalityUIComponentExposerReconciler) updateIngressSpec(
+	ingress *networkingv1.Ingress,
+	networks *uiv1alpha1.UINetworks,
+	component *uiv1alpha1.ScalityUIComponent,
+) error {
+	// Set annotations
+	if ingress.Annotations == nil {
+		ingress.Annotations = make(map[string]string)
+	}
+
+	// Copy ingress annotations from network config, but filter out problematic ones
+	for key, value := range networks.IngressAnnotations {
+		// Skip rewrite-target annotation as it conflicts with our sub-path setup
+		if key == "nginx.ingress.kubernetes.io/rewrite-target" {
+			continue
+		}
+		ingress.Annotations[key] = value
+	}
+
+	// Set IngressClassName if specified
+	if networks.IngressClassName != "" {
+		ingress.Spec.IngressClassName = &networks.IngressClassName
+	}
+
+	ingressPath := "/" + component.Name
+
+	// Set up rules
+	ingress.Spec.Rules = []networkingv1.IngressRule{
+		{
+			Host: networks.Host,
+			IngressRuleValue: networkingv1.IngressRuleValue{
+				HTTP: &networkingv1.HTTPIngressRuleValue{
+					Paths: []networkingv1.HTTPIngressPath{
+						{
+							Path:     ingressPath,
+							PathType: &pathTypePrefix,
+							Backend: networkingv1.IngressBackend{
+								Service: &networkingv1.IngressServiceBackend{
+									Name: component.Name,
+									Port: networkingv1.ServiceBackendPort{
+										Number: defaultServicePort,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Set up TLS if configured
+	if len(networks.TLS) > 0 {
+		ingress.Spec.TLS = networks.TLS
+	}
+
+	return nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ScalityUIComponentExposerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uiv1alpha1.ScalityUIComponentExposer{}).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForConfigMap)).
+		Owns(&networkingv1.Ingress{}).
 		Watches(&uiv1alpha1.ScalityUI{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUI)).
 		Watches(&uiv1alpha1.ScalityUIComponent{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUIComponent)).
 		Complete(r)
