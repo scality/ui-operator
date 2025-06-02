@@ -148,7 +148,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(runtimeConfig.Kind).To(Equal("MicroAppRuntimeConfiguration"))
 			Expect(runtimeConfig.APIVersion).To(Equal("ui.scality.com/v1alpha1"))
 			Expect(runtimeConfig.Metadata.Kind).To(Equal(""))
-			Expect(runtimeConfig.Metadata.Name).To(Equal(exposerName))
+			Expect(runtimeConfig.Metadata.Name).To(Equal(componentName))
 			Expect(runtimeConfig.Spec.ScalityUI).To(Equal(uiName))
 			Expect(runtimeConfig.Spec.ScalityUIComponent).To(Equal(componentName))
 
@@ -317,7 +317,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			err = json.Unmarshal([]byte(configMap.Data[configMapKey]), &runtimeConfig)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(runtimeConfig.Metadata.Name).To(Equal(exposerName))
+			Expect(runtimeConfig.Metadata.Name).To(Equal(componentName))
 
 			authConfig := runtimeConfig.Spec.Auth
 			Expect(authConfig["kind"]).To(Equal("OIDC"))

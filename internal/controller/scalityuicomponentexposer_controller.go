@@ -340,7 +340,7 @@ func (r *ScalityUIComponentExposerReconciler) buildRuntimeConfiguration(
 		APIVersion: runtimeConfigAPIVersion,
 		Metadata: MicroAppRuntimeConfigurationMetadata{
 			Kind: component.Status.Kind,
-			Name: exposer.Name,
+			Name: component.Name,
 		},
 		Spec: MicroAppRuntimeConfigurationSpec{
 			ScalityUI:          ui.Name,
