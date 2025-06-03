@@ -80,10 +80,6 @@ const (
 	defaultServicePort = 80
 )
 
-var (
-	pathTypePrefix = networkingv1.PathTypePrefix
-)
-
 // ScalityUIComponentExposerReconciler reconciles a ScalityUIComponentExposer object
 type ScalityUIComponentExposerReconciler struct {
 	client.Client
@@ -785,10 +781,8 @@ func (r *ScalityUIComponentExposerReconciler) reconcileIngress(
 ) error {
 	// Get network configuration (exposer takes precedence over UI)
 	networks := r.getNetworkConfig(exposer, ui)
-	if networks == nil || networks.Host == "" {
-		logger.Info("No network configuration found, skipping Ingress creation")
-		return nil
-	}
+	// Always create Ingress to maintain consistency with ScalityUI behavior
+	// (ScalityUI creates Ingress even when Host is empty)
 
 	ingressName := fmt.Sprintf("%s-%s", exposer.Name, ingressNameSuffix)
 
@@ -823,14 +817,10 @@ func (r *ScalityUIComponentExposerReconciler) getNetworkConfig(
 	exposer *uiv1alpha1.ScalityUIComponentExposer,
 	ui *uiv1alpha1.ScalityUI,
 ) *uiv1alpha1.UINetworks {
-	// Priority: exposer.spec.networks > ui.spec.networks
 	if exposer.Spec.Networks != nil {
 		return exposer.Spec.Networks
 	}
-	if ui.Spec.Networks.Host != "" {
-		return &ui.Spec.Networks
-	}
-	return nil
+	return &ui.Spec.Networks
 }
 
 // updateIngressSpec updates the Ingress specification
@@ -844,15 +834,6 @@ func (r *ScalityUIComponentExposerReconciler) updateIngressSpec(
 		ingress.Annotations = make(map[string]string)
 	}
 
-	// Copy ingress annotations from network config, but filter out problematic ones
-	for key, value := range networks.IngressAnnotations {
-		// Skip rewrite-target annotation as it conflicts with our sub-path setup
-		if key == "nginx.ingress.kubernetes.io/rewrite-target" {
-			continue
-		}
-		ingress.Annotations[key] = value
-	}
-
 	// Set IngressClassName if specified
 	if networks.IngressClassName != "" {
 		ingress.Spec.IngressClassName = &networks.IngressClassName
@@ -860,22 +841,21 @@ func (r *ScalityUIComponentExposerReconciler) updateIngressSpec(
 
 	ingressPath := "/" + component.Name
 
-	// Set up rules
-	ingress.Spec.Rules = []networkingv1.IngressRule{
-		{
-			Host: networks.Host,
-			IngressRuleValue: networkingv1.IngressRuleValue{
-				HTTP: &networkingv1.HTTPIngressRuleValue{
-					Paths: []networkingv1.HTTPIngressPath{
-						{
-							Path:     ingressPath,
-							PathType: &pathTypePrefix,
-							Backend: networkingv1.IngressBackend{
-								Service: &networkingv1.IngressServiceBackend{
-									Name: component.Name,
-									Port: networkingv1.ServiceBackendPort{
-										Number: defaultServicePort,
-									},
+	// Use prefix path type to handle both /component-name and /component-name/ paths
+	pathTypePrefix := networkingv1.PathTypePrefix
+
+	ingressRule := networkingv1.IngressRule{
+		IngressRuleValue: networkingv1.IngressRuleValue{
+			HTTP: &networkingv1.HTTPIngressRuleValue{
+				Paths: []networkingv1.HTTPIngressPath{
+					{
+						Path:     ingressPath,
+						PathType: &pathTypePrefix,
+						Backend: networkingv1.IngressBackend{
+							Service: &networkingv1.IngressServiceBackend{
+								Name: component.Name,
+								Port: networkingv1.ServiceBackendPort{
+									Number: defaultServicePort,
 								},
 							},
 						},
@@ -885,10 +865,7 @@ func (r *ScalityUIComponentExposerReconciler) updateIngressSpec(
 		},
 	}
 
-	// Set up TLS if configured
-	if len(networks.TLS) > 0 {
-		ingress.Spec.TLS = networks.TLS
-	}
+	ingress.Spec.Rules = []networkingv1.IngressRule{ingressRule}
 
 	return nil
 }
