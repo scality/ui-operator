@@ -708,7 +708,7 @@ func (r *ScalityUIReconciler) reconcileDeployedUIApps(ctx context.Context, scali
 			deployedApp := DeployedUIApp{
 				AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
 				Kind:               component.Status.Kind,
-				Name:               component.Name,
+				Name:               exposer.Name,
 				URL:                component.Status.PublicPath,
 				Version:            component.Status.Version,
 			}
