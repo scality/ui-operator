@@ -245,7 +245,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 					{
 						"appHistoryBasePath": "/test-app",
 						"kind":               "micro-app",
-						"name":               "test-component",
+						"name":               "test-exposer",
 						"url":                "/apps/test-component",
 						"version":            "1.0.0",
 					},
