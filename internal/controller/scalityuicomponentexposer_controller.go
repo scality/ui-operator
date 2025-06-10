@@ -34,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -308,10 +307,6 @@ func (r *ScalityUIComponentExposerReconciler) reconcileConfigMap(
 	logger.Info("Reconciling ConfigMap", "configMap", configMapName)
 
 	result, err := ctrl.CreateOrUpdate(ctx, r.Client, configMap, func() error {
-		if err := controllerutil.SetControllerReference(exposer, configMap, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set controller reference: %w", err)
-		}
-
 		return r.updateConfigMapData(configMap, exposer, ui, component)
 	})
 
