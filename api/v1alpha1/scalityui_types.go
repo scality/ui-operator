@@ -116,7 +116,7 @@ type UINetworks struct {
 	// IngressClassName specifies which ingress controller should implement the resource.
 	IngressClassName string `json:"ingressClassName"`
 	// Host specifies the hostname for the UI ingress.
-	Host string `json:"host"`
+	Host string `json:"host,omitempty"`
 	// TLS configures the TLS settings for the ingress.
 	TLS []networkingv1.IngressTLS `json:"tls,omitempty"`
 	// IngressAnnotations provides custom annotations for the ingress resource.

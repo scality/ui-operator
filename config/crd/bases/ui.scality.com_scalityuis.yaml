@@ -267,7 +267,6 @@ spec:
                       type: object
                     type: array
                 required:
-                - host
                 - ingressClassName
                 type: object
               productName:
