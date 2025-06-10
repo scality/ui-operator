@@ -416,6 +416,14 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				component.Status = uiv1alpha1.ScalityUIComponentStatus{
 					Kind: "micro-app", PublicPath: "/apps/test-component", Version: "1.0.0",
 				}
+				component.Status.Conditions = []metav1.Condition{
+					{
+						Type:               "Available",
+						Status:             metav1.ConditionTrue,
+						Reason:             "ComponentReady",
+						LastTransitionTime: metav1.Now(),
+					},
+				}
 				Expect(k8sClient.Status().Update(ctx, component)).To(Succeed())
 				defer k8sClient.Delete(ctx, component)
 
