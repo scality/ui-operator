@@ -780,8 +780,7 @@ func (r *ScalityUIReconciler) reconcileDeployedUIApps(ctx context.Context, scali
 			continue // Skip this exposer but continue with others
 		}
 
-		// Only include if component has valid status information
-		if component.Status.Kind != "" && component.Status.PublicPath != "" {
+		if component.Status.Conditions[0].Status == "True" {
 			deployedApp := DeployedUIApp{
 				AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
 				Kind:               component.Status.Kind,
