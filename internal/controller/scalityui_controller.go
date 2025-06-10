@@ -780,7 +780,15 @@ func (r *ScalityUIReconciler) reconcileDeployedUIApps(ctx context.Context, scali
 			continue // Skip this exposer but continue with others
 		}
 
-		if component.Status.Conditions[0].Status == "True" {
+		isAvailable := false
+		for _, condition := range component.Status.Conditions {
+			if condition.Type == "Available" && condition.Status == metav1.ConditionTrue {
+				isAvailable = true
+				break
+			}
+		}
+
+		if isAvailable {
 			deployedApp := DeployedUIApp{
 				AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
 				Kind:               component.Status.Kind,

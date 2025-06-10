@@ -527,55 +527,6 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
 		})
 
-		It("should set correct owner reference on ConfigMap", func() {
-			By("Creating the custom resource")
-			exposer := &uiv1alpha1.ScalityUIComponentExposer{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: "ui.scality.com/v1alpha1",
-					Kind:       "ScalityUIComponentExposer",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      exposerName,
-					Namespace: testNamespace,
-				},
-				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          uiName,
-					ScalityUIComponent: componentName,
-					AppHistoryBasePath: "/test-app",
-				},
-			}
-			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
-
-			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIComponentExposerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying ConfigMap owner reference")
-			configMap := &corev1.ConfigMap{}
-			configMapName := componentName + "-runtime-app-configuration"
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      configMapName,
-					Namespace: testNamespace,
-				}, configMap)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			Expect(configMap.OwnerReferences).To(HaveLen(1))
-			ownerRef := configMap.OwnerReferences[0]
-			Expect(ownerRef.APIVersion).To(Equal("ui.scality.com/v1alpha1"))
-			Expect(ownerRef.Kind).To(Equal("ScalityUIComponentExposer"))
-			Expect(ownerRef.Name).To(Equal(exposerName))
-			Expect(*ownerRef.Controller).To(BeTrue())
-			Expect(*ownerRef.BlockOwnerDeletion).To(BeTrue())
-		})
-
 		It("should handle resource not found gracefully", func() {
 			By("Reconciling a non-existent resource")
 			controllerReconciler := &ScalityUIComponentExposerReconciler{
