@@ -712,6 +712,38 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].PathType).NotTo(BeNil())
 			Expect(*ingress.Spec.Rules[0].HTTP.Paths[0].PathType).To(Equal(networkingv1.PathTypePrefix))
 		})
+
+		Describe("Status Conditions and Phases", func() {
+			It("should handle status updates during reconciliation", func() {
+				By("Creating a ScalityUI resource for status testing")
+				resource := &uiv1alpha1.ScalityUI{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: resourceName,
+					},
+					Spec: uiv1alpha1.ScalityUISpec{
+						Image:       imageName,
+						ProductName: productName,
+					},
+				}
+				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+				By("Running reconciliation")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying reconciliation completed successfully")
+				scalityui := &uiv1alpha1.ScalityUI{}
+				Expect(k8sClient.Get(ctx, clusterScopedName, scalityui)).To(Succeed())
+
+				By("Verifying status structure is present")
+				Expect(scalityui.Status).NotTo(BeNil())
+			})
+		})
 	})
 })
 

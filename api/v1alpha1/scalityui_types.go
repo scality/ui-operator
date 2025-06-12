@@ -157,6 +157,17 @@ type AuthConfig struct {
 type ScalityUIStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	// Phase represents the current phase of the ScalityUI deployment
+	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Failed
+	Phase string `json:"phase,omitempty"`
+
+	// Conditions represent the latest available observations of the ScalityUI's current state
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
 // +kubebuilder:object:root=true
