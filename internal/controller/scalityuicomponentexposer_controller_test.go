@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -92,6 +93,21 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			_ = k8sClient.Get(ctx, typeNamespacedName, exposer)
 			_ = k8sClient.Delete(ctx, exposer)
 
+			// Trigger reconcile to run finalizer logic if the exposer is still present
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, typeNamespacedName, exposer)
+				if err != nil {
+					return client.IgnoreNotFound(err) == nil // true when not found
+				}
+				// Still exists, run another reconcile to process deletion
+				_, _ = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				return false
+			}, time.Second*5, time.Millisecond*200).Should(BeTrue())
+
 			ui := &uiv1alpha1.ScalityUI{}
 			_ = k8sClient.Get(ctx, types.NamespacedName{Name: uiName}, ui)
 			_ = k8sClient.Delete(ctx, ui)
@@ -151,7 +167,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(runtimeConfig.Kind).To(Equal("MicroAppRuntimeConfiguration"))
 			Expect(runtimeConfig.APIVersion).To(Equal("ui.scality.com/v1alpha1"))
 			Expect(runtimeConfig.Metadata.Kind).To(Equal(""))
-			Expect(runtimeConfig.Metadata.Name).To(Equal(exposerName))
+			Expect(runtimeConfig.Metadata.Name).To(Equal(componentName))
 			Expect(runtimeConfig.Spec.ScalityUI).To(Equal(uiName))
 			Expect(runtimeConfig.Spec.ScalityUIComponent).To(Equal(componentName))
 
@@ -321,7 +337,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			err = json.Unmarshal([]byte(configMap.Data[configMapKey]), &runtimeConfig)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(runtimeConfig.Metadata.Name).To(Equal(exposerName))
+			Expect(runtimeConfig.Metadata.Name).To(Equal(componentName))
 
 			authConfig := runtimeConfig.Spec.Auth
 			Expect(authConfig["kind"]).To(Equal("OIDC"))
@@ -525,6 +541,55 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				return authConfig["providerUrl"] == "https://updated-auth.example.com" &&
 					authConfig["clientId"] == "updated-client"
 			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+		})
+
+		It("should set correct finalizer on ConfigMap", func() {
+			By("Creating the custom resource")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exposerName,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: componentName,
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap finalizer")
+			configMap := &corev1.ConfigMap{}
+			configMapName := componentName + "-runtime-app-configuration"
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: testNamespace,
+				}, configMap)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			finalizerName := configMapFinalizerPrefix + exposerName
+			Expect(configMap.Finalizers).To(ContainElement(finalizerName))
+
+			By("Verifying exposer has its own finalizer")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: exposerName, Namespace: testNamespace}, updatedExposer)).To(Succeed())
+			Expect(updatedExposer.Finalizers).To(ContainElement(exposerFinalizer))
 		})
 
 		It("should handle resource not found gracefully", func() {
