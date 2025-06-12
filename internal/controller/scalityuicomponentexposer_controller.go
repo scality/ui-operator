@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -68,6 +69,10 @@ const (
 	// Mount and deployment related constants
 	configHashAnnotation = "ui.scality.com/config-hash"
 	volumeNamePrefix     = "config-volume-"
+
+	// Finalizers
+	exposerFinalizer         = "uicomponentexposer.scality.com/finalizer"
+	configMapFinalizerPrefix = "uicomponentexposer.scality.com/"
 )
 
 // ScalityUIComponentExposerReconciler reconciles a ScalityUIComponentExposer object
@@ -123,6 +128,38 @@ func (r *ScalityUIComponentExposerReconciler) Reconcile(ctx context.Context, req
 		}
 		logger.Error(err, "Failed to get ScalityUIComponentExposer")
 		return ctrl.Result{}, fmt.Errorf("failed to get ScalityUIComponentExposer: %w", err)
+	}
+
+	// Handle deletion and finalizer logic
+	if !exposer.ObjectMeta.DeletionTimestamp.IsZero() {
+		// The object is being deleted
+		if controllerutil.ContainsFinalizer(exposer, exposerFinalizer) {
+			// Run finalization logic
+			if err := r.finalizeExposer(ctx, exposer, logger); err != nil {
+				logger.Error(err, "Failed to finalize ScalityUIComponentExposer")
+				return ctrl.Result{}, err
+			}
+
+			// Remove our finalizer and update the object
+			controllerutil.RemoveFinalizer(exposer, exposerFinalizer)
+			if err := r.Update(ctx, exposer); err != nil {
+				logger.Error(err, "Failed to remove finalizer from ScalityUIComponentExposer")
+				return ctrl.Result{}, err
+			}
+		}
+		// Nothing more to do since the object is being deleted
+		logger.Info("ScalityUIComponentExposer deletion reconciled")
+		return ctrl.Result{}, nil
+	}
+
+	// Ensure the exposer has our finalizer for future clean-up
+	if !controllerutil.ContainsFinalizer(exposer, exposerFinalizer) {
+		controllerutil.AddFinalizer(exposer, exposerFinalizer)
+		if err := r.Update(ctx, exposer); err != nil {
+			logger.Error(err, "Failed to add finalizer to ScalityUIComponentExposer")
+			return ctrl.Result{}, err
+		}
+		// Continue reconciliation with the finalizer now set
 	}
 
 	// Initialize status conditions if needed
@@ -307,6 +344,12 @@ func (r *ScalityUIComponentExposerReconciler) reconcileConfigMap(
 	logger.Info("Reconciling ConfigMap", "configMap", configMapName)
 
 	result, err := ctrl.CreateOrUpdate(ctx, r.Client, configMap, func() error {
+		// Add exposer-specific finalizer to the ConfigMap so it is only deleted when all exposers are gone
+		finalizerName := configMapFinalizerPrefix + exposer.Name
+		if !controllerutil.ContainsFinalizer(configMap, finalizerName) {
+			controllerutil.AddFinalizer(configMap, finalizerName)
+		}
+
 		return r.updateConfigMapData(configMap, exposer, ui, component)
 	})
 
@@ -368,7 +411,7 @@ func (r *ScalityUIComponentExposerReconciler) buildRuntimeConfiguration(
 		APIVersion: runtimeConfigAPIVersion,
 		Metadata: MicroAppRuntimeConfigurationMetadata{
 			Kind: component.Status.Kind,
-			Name: exposer.Name,
+			Name: component.Name,
 		},
 		Spec: MicroAppRuntimeConfigurationSpec{
 			ScalityUI:          ui.Name,
@@ -484,6 +527,38 @@ func (r *ScalityUIComponentExposerReconciler) findExposersForScalityUIComponent(
 		}
 	}
 
+	return requests
+}
+
+// findExposersForConfigMap maps a ConfigMap event to related ScalityUIComponentExposer reconcile requests
+func (r *ScalityUIComponentExposerReconciler) findExposersForConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
+	cm, ok := obj.(*corev1.ConfigMap)
+	if !ok {
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	// We expect ConfigMap name format: <component-name>-runtime-app-configuration
+	if !strings.HasSuffix(cm.Name, configMapNameSuffix) {
+		return nil
+	}
+
+	componentName := strings.TrimSuffix(cm.Name, "-"+configMapNameSuffix)
+
+	// List all exposers in the same namespace that reference this component
+	exposerList := &uiv1alpha1.ScalityUIComponentExposerList{}
+	if err := r.List(ctx, exposerList, client.InNamespace(cm.Namespace)); err != nil {
+		return nil
+	}
+
+	for _, exposer := range exposerList.Items {
+		if exposer.Spec.ScalityUIComponent == componentName {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: exposer.Name, Namespace: exposer.Namespace},
+			})
+		}
+	}
 	return requests
 }
 
@@ -634,11 +709,51 @@ func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolumeMount(contain
 	return true
 }
 
+// finalizeExposer performs clean-up tasks before the ScalityUIComponentExposer object is removed.
+func (r *ScalityUIComponentExposerReconciler) finalizeExposer(
+	ctx context.Context,
+	exposer *uiv1alpha1.ScalityUIComponentExposer,
+	logger logr.Logger,
+) error {
+	// Derive the ConfigMap name using the component referenced in the spec
+	configMapName := fmt.Sprintf("%s-%s", exposer.Spec.ScalityUIComponent, configMapNameSuffix)
+
+	cm := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: exposer.Namespace}, cm); err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("ConfigMap not found during finalization; nothing to clean", "configMap", configMapName)
+			return nil
+		}
+		return fmt.Errorf("failed to get ConfigMap during finalization: %w", err)
+	}
+
+	finalizerName := configMapFinalizerPrefix + exposer.Name
+
+	// Remove the exposer-specific finalizer from the ConfigMap, if present
+	if controllerutil.ContainsFinalizer(cm, finalizerName) {
+		controllerutil.RemoveFinalizer(cm, finalizerName)
+		if err := r.Update(ctx, cm); err != nil {
+			return fmt.Errorf("failed to update ConfigMap during finalization: %w", err)
+		}
+		logger.Info("Removed finalizer from ConfigMap", "configMap", cm.Name)
+	}
+
+	// If no other finalizers remain, delete the ConfigMap altogether
+	if len(cm.Finalizers) == 0 {
+		if err := r.Delete(ctx, cm); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete ConfigMap during finalization: %w", err)
+		}
+		logger.Info("Deleted ConfigMap as no finalizers remain", "configMap", cm.Name)
+	}
+
+	return nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ScalityUIComponentExposerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uiv1alpha1.ScalityUIComponentExposer{}).
-		Owns(&corev1.ConfigMap{}).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForConfigMap)).
 		Watches(&uiv1alpha1.ScalityUI{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUI)).
 		Watches(&uiv1alpha1.ScalityUIComponent{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUIComponent)).
 		Complete(r)
