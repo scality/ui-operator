@@ -27,6 +27,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -780,19 +781,11 @@ func (r *ScalityUIReconciler) reconcileDeployedUIApps(ctx context.Context, scali
 			continue // Skip this exposer but continue with others
 		}
 
-		isAvailable := false
-		for _, condition := range component.Status.Conditions {
-			if condition.Type == "Available" && condition.Status == metav1.ConditionTrue {
-				isAvailable = true
-				break
-			}
-		}
-
-		if isAvailable {
+		if meta.IsStatusConditionTrue(component.Status.Conditions, "ConfigurationRetrieved") {
 			deployedApp := DeployedUIApp{
 				AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
 				Kind:               component.Status.Kind,
-				Name:               exposer.Name,
+				Name:               component.Name,
 				URL:                component.Status.PublicPath,
 				Version:            component.Status.Version,
 			}
