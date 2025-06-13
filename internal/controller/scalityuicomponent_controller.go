@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -65,7 +66,126 @@ type ConfigFetcher interface {
 	FetchConfig(ctx context.Context, namespace, serviceName string, port int) (string, error)
 }
 
-// K8sServiceProxyFetcher implements ConfigFetcher using Kubernetes service proxy
+// SmartConfigFetcher automatically detects whether we're running in-cluster or locally
+// and uses the appropriate method to fetch configuration
+type SmartConfigFetcher struct {
+	restConfig *rest.Config
+	client     client.Client
+}
+
+// NewSmartConfigFetcher creates a new SmartConfigFetcher
+func NewSmartConfigFetcher(restConfig *rest.Config, client client.Client) *SmartConfigFetcher {
+	return &SmartConfigFetcher{
+		restConfig: restConfig,
+		client:     client,
+	}
+}
+
+// FetchConfig retrieves the micro-app configuration using the appropriate method
+func (f *SmartConfigFetcher) FetchConfig(ctx context.Context, namespace, serviceName string, port int) (string, error) {
+	logger := log.FromContext(ctx)
+
+	// Try in-cluster service URL first (works when running inside the cluster)
+	if config, err := f.fetchViaInClusterService(ctx, namespace, serviceName, port); err == nil {
+		logger.Info("Successfully fetched configuration via in-cluster service")
+		return config, nil
+	} else {
+		logger.Info("In-cluster service fetch failed, trying proxy API", "error", err.Error())
+	}
+
+	// Fallback to Kubernetes proxy API (works when running locally)
+	return f.fetchViaProxyAPI(ctx, namespace, serviceName, port)
+}
+
+// fetchViaInClusterService fetches configuration using direct service URL (works in-cluster)
+func (f *SmartConfigFetcher) fetchViaInClusterService(ctx context.Context, namespace, serviceName string, port int) (string, error) {
+	logger := log.FromContext(ctx)
+
+	// Construct the in-cluster service URL
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/.well-known/micro-app-configuration", serviceName, namespace, port)
+
+	logger.Info("Fetching configuration via in-cluster service", "url", url)
+
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to get configuration via in-cluster service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to fetch configuration, status code: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return string(body), nil
+}
+
+// fetchViaProxyAPI fetches configuration using Kubernetes proxy API (works locally)
+func (f *SmartConfigFetcher) fetchViaProxyAPI(ctx context.Context, namespace, serviceName string, port int) (string, error) {
+	logger := log.FromContext(ctx)
+
+	if f.restConfig == nil {
+		return "", fmt.Errorf("REST config not available for proxy API")
+	}
+
+	// Construct the proxy API URL
+	// Format: /api/v1/namespaces/{namespace}/services/{service}:{port}/proxy/{path}
+	proxyPath := fmt.Sprintf("/api/v1/namespaces/%s/services/%s:%d/proxy/.well-known/micro-app-configuration",
+		namespace, serviceName, port)
+
+	logger.Info("Fetching configuration via Kubernetes proxy API", "path", proxyPath)
+
+	// Create HTTP client with the REST config
+	httpClient, err := rest.HTTPClientFor(f.restConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP client: %w", err)
+	}
+
+	// Build the full URL
+	url := f.restConfig.Host + proxyPath
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Add authorization header if we have a bearer token
+	if f.restConfig.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+f.restConfig.BearerToken)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to get configuration via proxy API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to fetch configuration via proxy API, status code: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return string(body), nil
+}
+
+// K8sServiceProxyFetcher implements ConfigFetcher using direct in-cluster service calls
+// This fetcher only works when running inside the cluster and is kept for backward compatibility
 type K8sServiceProxyFetcher struct {
 	// Config *rest.Config // No longer needed for direct HTTP GET
 }
@@ -354,15 +474,10 @@ func (r *ScalityUIComponentReconciler) fetchMicroAppConfig(ctx context.Context, 
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ScalityUIComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// config, err := rest.InClusterConfig() // No longer needed here if K8sServiceProxyFetcher doesn't need it
-	// if err != nil {
-	// 	log.FromContext(context.Background()).Info("Failed to get in-cluster config, using manager's config as fallback", "error", err.Error())
-	// 	config = mgr.GetConfig()
-	// }
-
 	// Initialize the default config fetcher if not explicitly provided
 	if r.ConfigFetcher == nil {
-		r.ConfigFetcher = &K8sServiceProxyFetcher{} // Initialize without config
+		// Use the SmartConfigFetcher which automatically detects in-cluster vs local execution
+		r.ConfigFetcher = NewSmartConfigFetcher(mgr.GetConfig(), mgr.GetClient())
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).

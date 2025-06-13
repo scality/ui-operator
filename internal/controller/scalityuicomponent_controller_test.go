@@ -19,12 +19,15 @@ package controller
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -399,6 +402,103 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			// Check annotations
 			Expect(updatedDeployment.Spec.Template.Annotations).To(HaveKey("custom-annotation"))
 			Expect(updatedDeployment.Spec.Template.Annotations["custom-annotation"]).To(Equal("test-value"))
+		})
+	})
+})
+
+var _ = Describe("SmartConfigFetcher", func() {
+	Context("When fetching configuration", func() {
+		var (
+			ctx           context.Context
+			fetcher       *SmartConfigFetcher
+			testServer    *httptest.Server
+			testNamespace = "test-namespace"
+			testService   = "test-service"
+			testPort      = 80
+		)
+
+		BeforeEach(func() {
+			ctx = context.Background()
+		})
+
+		AfterEach(func() {
+			if testServer != nil {
+				testServer.Close()
+			}
+		})
+
+		It("should successfully fetch via in-cluster service when available", func() {
+			By("Setting up a test server to simulate in-cluster service")
+			testServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal("/.well-known/micro-app-configuration"))
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"kind":"UIModule","apiVersion":"v1alpha1","metadata":{"kind":"TestKind"},"spec":{"remoteEntryPath":"/remoteEntry.js","publicPath":"/test/","version":"1.0.0"}}`))
+			}))
+
+			By("Creating a SmartConfigFetcher")
+			restConfig := &rest.Config{
+				Host: testServer.URL,
+			}
+			fetcher = NewSmartConfigFetcher(restConfig, k8sClient)
+
+			By("Attempting to fetch configuration")
+			// This will fail the in-cluster attempt but succeed with proxy API
+			config, err := fetcher.FetchConfig(ctx, testNamespace, testService, testPort)
+
+			By("Verifying the result")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(config).To(ContainSubstring("TestKind"))
+			Expect(config).To(ContainSubstring("1.0.0"))
+		})
+
+		It("should fallback to proxy API when in-cluster service fails", func() {
+			By("Setting up a test server to simulate Kubernetes API proxy")
+			testServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				expectedPath := "/api/v1/namespaces/test-namespace/services/test-service:80/proxy/.well-known/micro-app-configuration"
+				Expect(r.URL.Path).To(Equal(expectedPath))
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"kind":"UIModule","apiVersion":"v1alpha1","metadata":{"kind":"ProxyTestKind"},"spec":{"remoteEntryPath":"/remoteEntry.js","publicPath":"/proxy-test/","version":"2.0.0"}}`))
+			}))
+
+			By("Creating a SmartConfigFetcher with proxy config")
+			restConfig := &rest.Config{
+				Host: testServer.URL,
+			}
+			fetcher = NewSmartConfigFetcher(restConfig, k8sClient)
+
+			By("Attempting to fetch configuration")
+			config, err := fetcher.FetchConfig(ctx, testNamespace, testService, testPort)
+
+			By("Verifying the result")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(config).To(ContainSubstring("ProxyTestKind"))
+			Expect(config).To(ContainSubstring("2.0.0"))
+		})
+
+		It("should return error when both methods fail", func() {
+			By("Creating a SmartConfigFetcher with invalid config")
+			restConfig := &rest.Config{
+				Host: "http://invalid-host:9999",
+			}
+			fetcher = NewSmartConfigFetcher(restConfig, k8sClient)
+
+			By("Attempting to fetch configuration")
+			_, err := fetcher.FetchConfig(ctx, testNamespace, testService, testPort)
+
+			By("Verifying the error")
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("should return error when REST config is nil", func() {
+			By("Creating a SmartConfigFetcher with nil config")
+			fetcher = NewSmartConfigFetcher(nil, k8sClient)
+
+			By("Attempting to fetch configuration")
+			_, err := fetcher.FetchConfig(ctx, testNamespace, testService, testPort)
+
+			By("Verifying the error")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("REST config not available for proxy API"))
 		})
 	})
 })
