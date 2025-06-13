@@ -40,6 +40,7 @@ import (
 
 	"github.com/go-logr/logr"
 	uiscalitycomv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/meta"
 )
 
 const (
@@ -780,19 +781,15 @@ func (r *ScalityUIReconciler) reconcileDeployedUIApps(ctx context.Context, scali
 			continue // Skip this exposer but continue with others
 		}
 
-		isAvailable := false
-		for _, condition := range component.Status.Conditions {
-			if condition.Type == "Available" && condition.Status == metav1.ConditionTrue {
-				isAvailable = true
-				break
-			}
-		}
+		// Check if component has successfully retrieved its configuration
+		configCondition := meta.FindStatusCondition(component.Status.Conditions, "ConfigurationRetrieved")
+		isAvailable := configCondition != nil && configCondition.Status == metav1.ConditionTrue
 
 		if isAvailable {
 			deployedApp := DeployedUIApp{
 				AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
 				Kind:               component.Status.Kind,
-				Name:               exposer.Name,
+				Name:               component.Name,
 				URL:                component.Status.PublicPath,
 				Version:            component.Status.Version,
 			}
