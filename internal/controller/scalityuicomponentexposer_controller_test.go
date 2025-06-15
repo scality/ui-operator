@@ -80,8 +80,8 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
-					Image:                       "scality/component:latest",
-					RuntimeAppConfigurationPath: "/usr/share/nginx/html/.well-known/runtime-app-configuration",
+					Image:     "scality/component:latest",
+					MountPath: "/usr/share/nginx/html/.well-known",
 				},
 			}
 			Expect(k8sClient.Create(ctx, component)).To(Succeed())
@@ -158,10 +158,10 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 			By("Verifying ConfigMap content")
-			Expect(configMap.Data).To(HaveKey(configMapKey))
+			Expect(configMap.Data).To(HaveKey(exposerName))
 
 			var runtimeConfig MicroAppRuntimeConfiguration
-			err = json.Unmarshal([]byte(configMap.Data[configMapKey]), &runtimeConfig)
+			err = json.Unmarshal([]byte(configMap.Data[exposerName]), &runtimeConfig)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(runtimeConfig.Kind).To(Equal("MicroAppRuntimeConfiguration"))
@@ -217,8 +217,8 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
-					Image:                       "scality/component:latest",
-					RuntimeAppConfigurationPath: "/usr/share/nginx/html/.well-known/runtime-app-configuration",
+					Image:     "scality/component:latest",
+					MountPath: "/usr/share/nginx/html/.well-known",
 				},
 			}
 			Expect(k8sClient.Create(ctx, componentNoAuth)).To(Succeed())
@@ -272,7 +272,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 			var runtimeConfig MicroAppRuntimeConfiguration
-			err = json.Unmarshal([]byte(configMap.Data[configMapKey]), &runtimeConfig)
+			err = json.Unmarshal([]byte(configMap.Data["test-exposer-no-auth"]), &runtimeConfig)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify empty auth configuration when neither exposer nor ScalityUI has auth
@@ -334,7 +334,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 			var runtimeConfig MicroAppRuntimeConfiguration
-			err = json.Unmarshal([]byte(configMap.Data[configMapKey]), &runtimeConfig)
+			err = json.Unmarshal([]byte(configMap.Data[exposerName]), &runtimeConfig)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(runtimeConfig.Metadata.Name).To(Equal(componentName))
@@ -532,7 +532,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				}
 
 				var runtimeConfig MicroAppRuntimeConfiguration
-				err = json.Unmarshal([]byte(configMap.Data[configMapKey]), &runtimeConfig)
+				err = json.Unmarshal([]byte(configMap.Data[exposerName]), &runtimeConfig)
 				if err != nil {
 					return false
 				}
@@ -655,7 +655,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
-					RuntimeAppConfigurationPath: "/usr/share/nginx/html/.well-known/runtime-app-configuration",
+					MountPath: "/usr/share/nginx/html/.well-known",
 				},
 				Status: uiv1alpha1.ScalityUIComponentStatus{
 					Kind: "test-kind",
@@ -732,8 +732,8 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(HaveLen(1))
 			mount := updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts[0]
 			Expect(mount.Name).To(Equal("config-volume-test-component-mount"))
-			Expect(mount.MountPath).To(Equal("/usr/share/nginx/html/.well-known/runtime-app-configuration"))
-			Expect(mount.SubPath).To(Equal("runtime-app-configuration"))
+			Expect(mount.MountPath).To(Equal("/usr/share/nginx/html/.well-known"))
+			Expect(mount.SubPath).To(Equal(""))
 			Expect(mount.ReadOnly).To(BeTrue())
 
 			// Check annotation
@@ -780,25 +780,25 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}
 
 			// First call should add mount
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/runtime-app-configuration")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known")
 			Expect(changed).To(BeTrue())
 			Expect(container.VolumeMounts).To(HaveLen(1))
 			Expect(container.VolumeMounts[0].Name).To(Equal("test-volume"))
-			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known/runtime-app-configuration"))
-			Expect(container.VolumeMounts[0].SubPath).To(Equal("runtime-app-configuration"))
+			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known"))
+			Expect(container.VolumeMounts[0].SubPath).To(Equal(""))
 			Expect(container.VolumeMounts[0].ReadOnly).To(BeTrue())
 
 			// Second call with same params should not change
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/runtime-app-configuration")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known")
 			Expect(changed).To(BeFalse())
 
 			// Modify mount and verify it gets corrected
 			container.VolumeMounts[0].ReadOnly = false
 			container.VolumeMounts[0].MountPath = "/wrong/path"
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/runtime-app-configuration")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known")
 			Expect(changed).To(BeTrue())
 			Expect(container.VolumeMounts[0].ReadOnly).To(BeTrue())
-			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known/runtime-app-configuration"))
+			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known"))
 		})
 
 		It("should handle deployment not found gracefully", func() {
@@ -809,7 +809,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
-					RuntimeAppConfigurationPath: "/usr/share/nginx/html/.well-known/runtime-app-configuration",
+					MountPath: "/usr/share/nginx/html/.well-known",
 				},
 			}
 			Expect(k8sClient.Create(ctx, component)).To(Succeed())
@@ -884,7 +884,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 			var runtimeConfig MicroAppRuntimeConfiguration
-			err = json.Unmarshal([]byte(configMap.Data[configMapKey]), &runtimeConfig)
+			err = json.Unmarshal([]byte(configMap.Data[exposerName]), &runtimeConfig)
 			Expect(err).NotTo(HaveOccurred())
 
 			selfConfig := runtimeConfig.Spec.SelfConfiguration
