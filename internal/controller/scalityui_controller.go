@@ -715,6 +715,7 @@ func (r *ScalityUIReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.Ingress{}).
 		Watches(&uiscalitycomv1alpha1.ScalityUIComponentExposer{}, handler.EnqueueRequestsFromMapFunc(r.findUIForExposer)).
+		Watches(&uiscalitycomv1alpha1.ScalityUIComponent{}, handler.EnqueueRequestsFromMapFunc(r.findUIForComponent)).
 		Complete(r)
 }
 
@@ -887,6 +888,40 @@ func (r *ScalityUIReconciler) findUIForExposer(ctx context.Context, obj client.O
 			},
 		},
 	}
+}
+
+// findUIForComponent is a mapper function for watch events from ScalityUIComponent
+func (r *ScalityUIReconciler) findUIForComponent(ctx context.Context, obj client.Object) []reconcile.Request {
+	component, ok := obj.(*uiscalitycomv1alpha1.ScalityUIComponent)
+	if !ok {
+		return nil
+	}
+
+	// Find all exposers that reference this component
+	exposerList := &uiscalitycomv1alpha1.ScalityUIComponentExposerList{}
+	if err := r.List(ctx, exposerList, client.InNamespace(component.Namespace)); err != nil {
+		return nil
+	}
+
+	// Collect unique UI names that should be reconciled
+	uiNames := make(map[string]bool)
+	for _, exposer := range exposerList.Items {
+		if exposer.Spec.ScalityUIComponent == component.Name {
+			uiNames[exposer.Spec.ScalityUI] = true
+		}
+	}
+
+	// Convert to reconcile requests
+	var requests []reconcile.Request
+	for uiName := range uiNames {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name: uiName,
+			},
+		})
+	}
+
+	return requests
 }
 
 // hasAntiAffinityRule checks if the anti-affinity rule already exists
