@@ -27,6 +27,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -88,6 +89,7 @@ type ScalityUIComponentExposerReconciler struct {
 // +kubebuilder:rbac:groups=ui.scality.com,resources=scalityuicomponents,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 
 // MicroAppRuntimeConfiguration represents the runtime configuration structure
 type MicroAppRuntimeConfiguration struct {
@@ -212,6 +214,19 @@ func (r *ScalityUIComponentExposerReconciler) Reconcile(ctx context.Context, req
 
 	r.setStatusCondition(exposer, conditionTypeDeploymentReady, metav1.ConditionTrue,
 		reasonReconcileSucceeded, "Deployment successfully updated with ConfigMap mount")
+
+	// Reconcile Ingress (inherits from ScalityUI Networks, can be overridden by exposer config)
+	if err := r.reconcileIngress(ctx, exposer, component, ui, logger); err != nil {
+		logger.Error(err, "Failed to reconcile Ingress")
+		r.setStatusCondition(exposer, "IngressReady", metav1.ConditionFalse,
+			reasonReconcileFailed, fmt.Sprintf("Failed to reconcile Ingress: %v", err))
+
+		if updateErr := r.updateStatus(ctx, exposer, logger); updateErr != nil {
+			logger.Error(updateErr, "Failed to update status after Ingress reconciliation failure")
+		}
+
+		return ctrl.Result{RequeueAfter: defaultRequeueInterval}, fmt.Errorf("failed to reconcile Ingress: %w", err)
+	}
 
 	if err := r.updateStatus(ctx, exposer, logger); err != nil {
 		logger.Error(err, "Failed to update status")
@@ -801,10 +816,221 @@ func (r *ScalityUIComponentExposerReconciler) finalizeExposer(
 	return fmt.Errorf("failed to finalize exposer after %d retries", maxRetries)
 }
 
+// reconcileIngress creates or updates an Ingress for the exposer if ingress is enabled
+func (r *ScalityUIComponentExposerReconciler) reconcileIngress(
+	ctx context.Context,
+	exposer *uiv1alpha1.ScalityUIComponentExposer,
+	component *uiv1alpha1.ScalityUIComponent,
+	ui *uiv1alpha1.ScalityUI,
+	logger logr.Logger,
+) error {
+	// Merge networks configuration (exposer config overrides UI config)
+	networksConfig, path := r.mergeNetworksConfig(exposer, ui, component)
+
+	// If networks is not configured, skip ingress creation
+	// (any existing ingress will be garbage collected automatically by Kubernetes)
+	if networksConfig == nil {
+		r.setStatusCondition(exposer, "IngressReady", metav1.ConditionTrue,
+			reasonReconcileSucceeded, "Ingress not needed (networks not configured)")
+		return nil
+	}
+
+	// Create or update the ingress
+	ingress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      exposer.Name,
+			Namespace: exposer.Namespace,
+		},
+	}
+
+	result, err := ctrl.CreateOrUpdate(ctx, r.Client, ingress, func() error {
+		return r.buildIngress(ingress, exposer, component, networksConfig, path)
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create or update Ingress: %w", err)
+	}
+
+	logger.Info("Successfully reconciled Ingress", "ingress", ingress.Name, "operation", result)
+	r.setStatusCondition(exposer, "IngressReady", metav1.ConditionTrue,
+		reasonReconcileSucceeded, "Ingress successfully created/updated")
+
+	return nil
+}
+
+// mergeNetworksConfig merges networks configuration with inheritance and override logic
+func (r *ScalityUIComponentExposerReconciler) mergeNetworksConfig(
+	exposer *uiv1alpha1.ScalityUIComponentExposer,
+	ui *uiv1alpha1.ScalityUI,
+	component *uiv1alpha1.ScalityUIComponent,
+) (*uiv1alpha1.UINetworks, string) {
+	// Start with default configuration
+	merged := &uiv1alpha1.UINetworks{}
+	var path string
+	hasNetworks := false
+
+	// Inherit from ScalityUI Networks if available
+	if ui.Spec.Networks != nil {
+		hasNetworks = true
+		merged.IngressClassName = ui.Spec.Networks.IngressClassName
+		merged.Host = ui.Spec.Networks.Host
+		merged.TLS = ui.Spec.Networks.TLS
+		merged.IngressAnnotations = make(map[string]string)
+		for k, v := range ui.Spec.Networks.IngressAnnotations {
+			merged.IngressAnnotations[k] = v
+		}
+	}
+
+	// Set default path from component's publicPath if available
+	if component.Status.PublicPath != "" {
+		path = component.Status.PublicPath
+	} else {
+		path = "/" + component.Name // fallback path
+	}
+
+	// Override with exposer-specific configuration if provided
+	if exposer.Spec.Networks != nil {
+		hasNetworks = true
+		if exposer.Spec.Networks.IngressClassName != "" {
+			merged.IngressClassName = exposer.Spec.Networks.IngressClassName
+		}
+		if exposer.Spec.Networks.Host != "" {
+			merged.Host = exposer.Spec.Networks.Host
+		}
+		if len(exposer.Spec.Networks.TLS) > 0 {
+			merged.TLS = exposer.Spec.Networks.TLS
+		}
+		if len(exposer.Spec.Networks.IngressAnnotations) > 0 {
+			if merged.IngressAnnotations == nil {
+				merged.IngressAnnotations = make(map[string]string)
+			}
+			for k, v := range exposer.Spec.Networks.IngressAnnotations {
+				merged.IngressAnnotations[k] = v
+			}
+		}
+	}
+
+	if !hasNetworks {
+		return nil, ""
+	}
+
+	return merged, path
+}
+
+// buildIngress configures the Ingress resource
+func (r *ScalityUIComponentExposerReconciler) buildIngress(
+	ingress *networkingv1.Ingress,
+	exposer *uiv1alpha1.ScalityUIComponentExposer,
+	component *uiv1alpha1.ScalityUIComponent,
+	networks *uiv1alpha1.UINetworks,
+	path string,
+) error {
+	// Set owner reference
+	if err := controllerutil.SetControllerReference(exposer, ingress, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set controller reference: %w", err)
+	}
+
+	// Set annotations
+	if ingress.Annotations == nil {
+		ingress.Annotations = make(map[string]string)
+	}
+	for k, v := range networks.IngressAnnotations {
+		ingress.Annotations[k] = v
+	}
+
+	// Configure ingress spec
+	// Use Exact path type for precise matching of .well-known paths
+	defaultPathType := networkingv1.PathTypeExact
+
+	// Add rewrite annotation for exposer runtime configuration path
+	if ingress.Annotations == nil {
+		ingress.Annotations = make(map[string]string)
+	}
+
+	// Configure different behavior based on access pattern (IP vs Host)
+	// For IP access (controlplane): rewrite .well-known requests to specific exposer config
+	// For Host access (workloadplane): handle differently based on the access pattern
+
+	// Use configuration-snippet for conditional rewriting
+	// Only rewrite the specific runtime-app-configuration path, leave other paths as-is
+	configSnippet := fmt.Sprintf(`
+if ($request_uri ~ "^%s/\.well-known/runtime-app-configuration") {
+    rewrite ^.*$ /.well-known/configs/%s break;
+}
+`, path, exposer.Name)
+	ingress.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"] = configSnippet
+
+	// Remove rewrite-target annotation since we're using configuration-snippet
+	delete(ingress.Annotations, "nginx.ingress.kubernetes.io/rewrite-target")
+
+	// Create paths for both runtime configuration and general micro-app resources
+	prefixPathType := networkingv1.PathTypePrefix
+
+	ingressRule := networkingv1.IngressRule{
+		IngressRuleValue: networkingv1.IngressRuleValue{
+			HTTP: &networkingv1.HTTPIngressRuleValue{
+				Paths: []networkingv1.HTTPIngressPath{
+					// Specific path for runtime configuration with rewrite
+					{
+						Path:     path + "/.well-known/runtime-app-configuration",
+						PathType: &defaultPathType,
+						Backend: networkingv1.IngressBackend{
+							Service: &networkingv1.IngressServiceBackend{
+								Name: component.Name, // Service name matches component name
+								Port: networkingv1.ServiceBackendPort{
+									Number: 80,
+								},
+							},
+						},
+					},
+					// General path for all other micro-app resources
+					{
+						Path:     path + "/",
+						PathType: &prefixPathType,
+						Backend: networkingv1.IngressBackend{
+							Service: &networkingv1.IngressServiceBackend{
+								Name: component.Name, // Service name matches component name
+								Port: networkingv1.ServiceBackendPort{
+									Number: 80,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Set host if provided
+	if networks.Host != "" {
+		ingressRule.Host = networks.Host
+	}
+
+	ingress.Spec = networkingv1.IngressSpec{
+		Rules: []networkingv1.IngressRule{ingressRule},
+	}
+
+	// Set IngressClassName if provided
+	if networks.IngressClassName != "" {
+		ingress.Spec.IngressClassName = &networks.IngressClassName
+	}
+
+	// Set TLS configuration if provided
+	if len(networks.TLS) > 0 {
+		ingress.Spec.TLS = networks.TLS
+	}
+
+	return nil
+}
+
+// Note: ensureIngressDeleted function removed since Ingress cleanup is handled
+// automatically by Kubernetes garbage collection via Owns(&networkingv1.Ingress{})
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ScalityUIComponentExposerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uiv1alpha1.ScalityUIComponentExposer{}).
+		Owns(&networkingv1.Ingress{}).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForConfigMap)).
 		Watches(&uiv1alpha1.ScalityUI{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUI)).
 		Watches(&uiv1alpha1.ScalityUIComponent{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUIComponent)).
