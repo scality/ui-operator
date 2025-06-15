@@ -29,8 +29,9 @@ type ScalityUIComponentSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 	Image string `json:"image"`
 
-	// RuntimeAppConfigurationPath is the path to the runtime app configuration file
-	RuntimeAppConfigurationPath string `json:"runtimeAppConfigurationPath"`
+	// MountPath is the directory path where runtime app configuration files will be mounted
+	// Each exposer will create a separate file named after the exposer name in this directory
+	MountPath string `json:"mountPath"`
 }
 
 // ScalityUIComponentStatus defines the observed state of ScalityUIComponent

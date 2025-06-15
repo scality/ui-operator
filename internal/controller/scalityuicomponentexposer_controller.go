@@ -46,7 +46,6 @@ import (
 // Constants for the controller
 const (
 	// ConfigMap related constants
-	configMapKey        = "runtime-app-configuration"
 	configMapNameSuffix = "runtime-app-configuration"
 
 	// Condition types
@@ -350,7 +349,12 @@ func (r *ScalityUIComponentExposerReconciler) reconcileConfigMap(
 			controllerutil.AddFinalizer(configMap, finalizerName)
 		}
 
-		return r.updateConfigMapData(configMap, exposer, ui, component)
+		// Build and add the runtime configuration for this exposer
+		if err := r.updateConfigMapData(configMap, exposer, ui, component); err != nil {
+			return err
+		}
+
+		return nil
 	})
 
 	if err != nil {
@@ -383,7 +387,8 @@ func (r *ScalityUIComponentExposerReconciler) updateConfigMapData(
 		return fmt.Errorf("failed to marshal runtime configuration: %w", err)
 	}
 
-	configMap.Data[configMapKey] = string(configJSONBytes)
+	// Use exposer name as the key in ConfigMap
+	configMap.Data[exposer.Name] = string(configJSONBytes)
 	return nil
 }
 
@@ -564,11 +569,28 @@ func (r *ScalityUIComponentExposerReconciler) findExposersForConfigMap(ctx conte
 
 // calculateConfigMapHash calculates the SHA-256 hash of the ConfigMap data
 func (r *ScalityUIComponentExposerReconciler) calculateConfigMapHash(configMap *corev1.ConfigMap) (string, error) {
-	dataToHash, dataKeyExists := configMap.Data[configMapKey]
-	if !dataKeyExists {
-		return "", fmt.Errorf("key '%s' missing from ConfigMap '%s'", configMapKey, configMap.Name)
+	// Hash all data in the ConfigMap to ensure any changes trigger deployment update
+	if len(configMap.Data) == 0 {
+		return "", fmt.Errorf("ConfigMap '%s' has no data", configMap.Name)
 	}
-	hash := sha256.Sum256([]byte(dataToHash))
+
+	// Create a sorted representation of all data for consistent hashing
+	var dataStrings []string
+	for key, value := range configMap.Data {
+		dataStrings = append(dataStrings, fmt.Sprintf("%s=%s", key, value))
+	}
+
+	// Sort to ensure consistent hash regardless of map iteration order
+	for i := 0; i < len(dataStrings); i++ {
+		for j := i + 1; j < len(dataStrings); j++ {
+			if dataStrings[i] > dataStrings[j] {
+				dataStrings[i], dataStrings[j] = dataStrings[j], dataStrings[i]
+			}
+		}
+	}
+
+	combinedData := strings.Join(dataStrings, "|")
+	hash := sha256.Sum256([]byte(combinedData))
 	return hex.EncodeToString(hash[:]), nil
 }
 
@@ -608,7 +630,7 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(
 
 		// Update or add the ConfigMap volume mount for each container
 		for i := range deployment.Spec.Template.Spec.Containers {
-			configChanged = r.ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName, component.Spec.RuntimeAppConfigurationPath) || configChanged
+			configChanged = r.ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName, component.Spec.MountPath) || configChanged
 		}
 
 		// Set annotation to trigger rolling update if configuration changed or hash is different
@@ -684,14 +706,14 @@ func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolumeMount(contain
 	// Check for existing mount and update if needed
 	for i, mount := range container.VolumeMounts {
 		if mount.Name == volumeName {
-			// Check if mount configuration needs update
+			// Check if mount configuration needs update (no SubPath for directory mount)
 			needsUpdate := mount.MountPath != mountPath ||
-				mount.SubPath != configMapKey ||
+				mount.SubPath != "" ||
 				!mount.ReadOnly
 
 			if needsUpdate {
 				container.VolumeMounts[i].MountPath = mountPath
-				container.VolumeMounts[i].SubPath = configMapKey
+				container.VolumeMounts[i].SubPath = "" // No subPath for directory mount
 				container.VolumeMounts[i].ReadOnly = true
 				return true
 			}
@@ -699,11 +721,10 @@ func (r *ScalityUIComponentExposerReconciler) ensureConfigMapVolumeMount(contain
 		}
 	}
 
-	// Add new mount
+	// Add new mount (directory mount without subPath)
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name:      volumeName,
 		MountPath: mountPath,
-		SubPath:   configMapKey,
 		ReadOnly:  true,
 	})
 	return true
@@ -715,38 +736,67 @@ func (r *ScalityUIComponentExposerReconciler) finalizeExposer(
 	exposer *uiv1alpha1.ScalityUIComponentExposer,
 	logger logr.Logger,
 ) error {
-	// Derive the ConfigMap name using the component referenced in the spec
+	const maxRetries = 3
 	configMapName := fmt.Sprintf("%s-%s", exposer.Spec.ScalityUIComponent, configMapNameSuffix)
-
-	cm := &corev1.ConfigMap{}
-	if err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: exposer.Namespace}, cm); err != nil {
-		if errors.IsNotFound(err) {
-			logger.Info("ConfigMap not found during finalization; nothing to clean", "configMap", configMapName)
-			return nil
-		}
-		return fmt.Errorf("failed to get ConfigMap during finalization: %w", err)
-	}
-
 	finalizerName := configMapFinalizerPrefix + exposer.Name
 
-	// Remove the exposer-specific finalizer from the ConfigMap, if present
-	if controllerutil.ContainsFinalizer(cm, finalizerName) {
-		controllerutil.RemoveFinalizer(cm, finalizerName)
-		if err := r.Update(ctx, cm); err != nil {
-			return fmt.Errorf("failed to update ConfigMap during finalization: %w", err)
+	for i := 0; i < maxRetries; i++ {
+		cm := &corev1.ConfigMap{}
+		if err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: exposer.Namespace}, cm); err != nil {
+			if errors.IsNotFound(err) {
+				logger.Info("ConfigMap not found during finalization; nothing to clean", "configMap", configMapName)
+				return nil
+			}
+			return fmt.Errorf("failed to get ConfigMap during finalization: %w", err)
 		}
-		logger.Info("Removed finalizer from ConfigMap", "configMap", cm.Name)
+
+		// Remove the exposer-specific data key from ConfigMap
+		dataRemoved := false
+		if cm.Data != nil {
+			if _, exists := cm.Data[exposer.Name]; exists {
+				delete(cm.Data, exposer.Name)
+				dataRemoved = true
+				logger.Info("Removed exposer data from ConfigMap", "exposer", exposer.Name, "configMap", cm.Name)
+			}
+		}
+
+		// Remove the exposer-specific finalizer from the ConfigMap, if present
+		finalizerRemoved := false
+		if controllerutil.ContainsFinalizer(cm, finalizerName) {
+			controllerutil.RemoveFinalizer(cm, finalizerName)
+			finalizerRemoved = true
+			logger.Info("Removed finalizer from ConfigMap", "finalizer", finalizerName, "configMap", cm.Name)
+		}
+
+		// Update the ConfigMap with removed data and finalizer
+		if dataRemoved || finalizerRemoved {
+			if err := r.Update(ctx, cm); err != nil {
+				if errors.IsConflict(err) && i < maxRetries-1 {
+					logger.Info("Conflict updating ConfigMap during finalization, retrying", "attempt", i+1, "configMap", cm.Name)
+					time.Sleep(time.Millisecond * time.Duration(100*(i+1))) // exponential backoff
+					continue
+				}
+				return fmt.Errorf("failed to update ConfigMap during finalization: %w", err)
+			}
+		}
+
+		// If no other finalizers remain and no data exists, delete the ConfigMap altogether
+		if len(cm.Finalizers) == 0 && len(cm.Data) == 0 {
+			if err := r.Delete(ctx, cm); err != nil && !errors.IsNotFound(err) {
+				if errors.IsConflict(err) && i < maxRetries-1 {
+					logger.Info("Conflict deleting ConfigMap during finalization, retrying", "attempt", i+1, "configMap", cm.Name)
+					time.Sleep(time.Millisecond * time.Duration(100*(i+1))) // exponential backoff
+					continue
+				}
+				return fmt.Errorf("failed to delete ConfigMap during finalization: %w", err)
+			}
+			logger.Info("Deleted ConfigMap as no finalizers and data remain", "configMap", cm.Name)
+		}
+
+		return nil
 	}
 
-	// If no other finalizers remain, delete the ConfigMap altogether
-	if len(cm.Finalizers) == 0 {
-		if err := r.Delete(ctx, cm); err != nil && !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete ConfigMap during finalization: %w", err)
-		}
-		logger.Info("Deleted ConfigMap as no finalizers remain", "configMap", cm.Name)
-	}
-
-	return nil
+	return fmt.Errorf("failed to finalize exposer after %d retries", maxRetries)
 }
 
 // SetupWithManager sets up the controller with the Manager.
