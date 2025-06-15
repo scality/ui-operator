@@ -418,9 +418,9 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				}
 				component.Status.Conditions = []metav1.Condition{
 					{
-						Type:               "Available",
+						Type:               "ConfigurationRetrieved",
 						Status:             metav1.ConditionTrue,
-						Reason:             "ComponentReady",
+						Reason:             "FetchSucceeded",
 						LastTransitionTime: metav1.Now(),
 					},
 				}
@@ -446,7 +446,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 					{
 						"appHistoryBasePath": "/test-app",
 						"kind":               "micro-app",
-						"name":               "test-exposer",
+						"name":               "test-component", // Should be component name, not exposer name
 						"url":                "/apps/test-component",
 						"version":            "1.0.0",
 					},
