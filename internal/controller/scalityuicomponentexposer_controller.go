@@ -629,8 +629,10 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(
 		configChanged = r.ensureConfigMapVolume(deployment, volumeName, configMapName) || configChanged
 
 		// Update or add the ConfigMap volume mount for each container
+		// Mount to configs subdirectory to avoid overwriting the original micro-app-configuration file
+		configsMountPath := component.Spec.MountPath + "/configs"
 		for i := range deployment.Spec.Template.Spec.Containers {
-			configChanged = r.ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName, component.Spec.MountPath) || configChanged
+			configChanged = r.ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName, configsMountPath) || configChanged
 		}
 
 		// Set annotation to trigger rolling update if configuration changed or hash is different
