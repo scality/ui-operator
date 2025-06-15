@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -890,15 +891,379 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			selfConfig := runtimeConfig.Spec.SelfConfiguration
 			Expect(selfConfig["apiUrl"]).To(Equal("https://api.example.com"))
 
-			features, ok := selfConfig["features"].(map[string]interface{})
+			features, ok := selfConfig["features"].(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(features["enableFeatureA"]).To(Equal(true))
 			Expect(features["enableFeatureB"]).To(Equal(false))
 
-			limits, ok := selfConfig["limits"].(map[string]interface{})
+			limits, ok := selfConfig["limits"].(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(limits["maxItems"]).To(Equal(float64(100))) // JSON numbers are float64
 			Expect(limits["timeout"]).To(Equal(float64(30)))
+		})
+
+		It("should create Ingress when networks are configured in ScalityUI", func() {
+			By("Creating ScalityUI with networks configuration")
+			uiWithNetworks := &uiv1alpha1.ScalityUI{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUI",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-ui-with-networks",
+				},
+				Spec: uiv1alpha1.ScalityUISpec{
+					Image:       "scality/ui:latest",
+					ProductName: "Test Product",
+					Networks: &uiv1alpha1.UINetworks{
+						Host:             "ui.example.com",
+						IngressClassName: "nginx",
+						IngressAnnotations: map[string]string{
+							"nginx.ingress.kubernetes.io/ssl-redirect": "true",
+						},
+						TLS: []networkingv1.IngressTLS{
+							{
+								Hosts:      []string{"ui.example.com"},
+								SecretName: "ui-tls-secret",
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, uiWithNetworks)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, uiWithNetworks) }()
+
+			By("Creating component with public path")
+			componentWithPath := &uiv1alpha1.ScalityUIComponent{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponent",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-component-with-path",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/component:latest",
+					MountPath: "/usr/share/nginx/html/.well-known",
+				},
+				Status: uiv1alpha1.ScalityUIComponentStatus{
+					PublicPath: "/my-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, componentWithPath)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, componentWithPath) }()
+
+			// Update status separately since it's a subresource
+			componentWithPath.Status.PublicPath = "/my-app"
+			Expect(k8sClient.Status().Update(ctx, componentWithPath)).To(Succeed())
+
+			By("Creating exposer that inherits networks configuration")
+			exposerWithIngress := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-exposer-with-ingress",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          "test-ui-with-networks",
+					ScalityUIComponent: "test-component-with-path",
+					AppHistoryBasePath: "/my-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposerWithIngress)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposerWithIngress) }()
+
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("Reconciling the exposer")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-with-ingress",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying Ingress was created")
+			ingress := &networkingv1.Ingress{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-exposer-with-ingress",
+					Namespace: testNamespace,
+				}, ingress)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			By("Verifying Ingress configuration")
+			Expect(ingress.Spec.IngressClassName).NotTo(BeNil())
+			Expect(*ingress.Spec.IngressClassName).To(Equal("nginx"))
+
+			Expect(ingress.Spec.Rules).To(HaveLen(1))
+			rule := ingress.Spec.Rules[0]
+			Expect(rule.Host).To(Equal("ui.example.com"))
+
+			Expect(rule.IngressRuleValue.HTTP.Paths).To(HaveLen(2))
+
+			// First path should be exact match for runtime configuration
+			configPath := rule.IngressRuleValue.HTTP.Paths[0]
+			Expect(configPath.Path).To(Equal("/my-app/.well-known/runtime-app-configuration"))
+			Expect(*configPath.PathType).To(Equal(networkingv1.PathTypeExact))
+			Expect(configPath.Backend.Service.Name).To(Equal("test-component-with-path"))
+
+			// Second path should be prefix match for general app resources
+			appPath := rule.IngressRuleValue.HTTP.Paths[1]
+			Expect(appPath.Path).To(Equal("/my-app/"))
+			Expect(*appPath.PathType).To(Equal(networkingv1.PathTypePrefix))
+
+			// Verify TLS configuration
+			Expect(ingress.Spec.TLS).To(HaveLen(1))
+			Expect(ingress.Spec.TLS[0].Hosts).To(ContainElement("ui.example.com"))
+			Expect(ingress.Spec.TLS[0].SecretName).To(Equal("ui-tls-secret"))
+
+			// Verify annotations including configuration snippet
+			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/ssl-redirect"))
+			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/configuration-snippet"))
+			configSnippet := ingress.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
+			Expect(configSnippet).To(ContainSubstring("/my-app/\\.well-known/runtime-app-configuration"))
+			Expect(configSnippet).To(ContainSubstring("test-exposer-with-ingress"))
+
+			By("Checking IngressReady status condition")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-exposer-with-ingress",
+				Namespace: testNamespace,
+			}, updatedExposer)).To(Succeed())
+
+			ingressCondition := meta.FindStatusCondition(updatedExposer.Status.Conditions, "IngressReady")
+			Expect(ingressCondition).NotTo(BeNil())
+			Expect(ingressCondition.Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("should not create Ingress when networks are not configured", func() {
+			By("Creating exposer without networks configuration")
+			exposerNoNetworks := &uiv1alpha1.ScalityUIComponentExposer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-exposer-no-networks",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: componentName,
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposerNoNetworks)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposerNoNetworks) }()
+
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("Reconciling the exposer")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-no-networks",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying no Ingress was created")
+			ingress := &networkingv1.Ingress{}
+			Consistently(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-exposer-no-networks",
+					Namespace: testNamespace,
+				}, ingress)
+				return err != nil
+			}, time.Second*2, time.Millisecond*200).Should(BeTrue())
+
+			By("Checking IngressReady status condition")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-exposer-no-networks",
+				Namespace: testNamespace,
+			}, updatedExposer)).To(Succeed())
+
+			ingressCondition := meta.FindStatusCondition(updatedExposer.Status.Conditions, "IngressReady")
+			Expect(ingressCondition).NotTo(BeNil())
+			Expect(ingressCondition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(ingressCondition.Message).To(ContainSubstring("Ingress not needed"))
+		})
+
+		It("should override ScalityUI networks configuration with exposer-specific networks", func() {
+			By("Creating ScalityUI with base networks configuration")
+			uiWithBaseNetworks := &uiv1alpha1.ScalityUI{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-ui-base-networks",
+				},
+				Spec: uiv1alpha1.ScalityUISpec{
+					Image:       "scality/ui:latest",
+					ProductName: "Test Product",
+					Networks: &uiv1alpha1.UINetworks{
+						Host:             "base.example.com",
+						IngressClassName: "base-ingress",
+						IngressAnnotations: map[string]string{
+							"nginx.ingress.kubernetes.io/ssl-redirect": "false",
+							"nginx.ingress.kubernetes.io/rate-limit":   "100",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, uiWithBaseNetworks)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, uiWithBaseNetworks) }()
+
+			By("Creating component for override test")
+			componentOverride := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-component-override",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					MountPath: "/usr/share/nginx/html/.well-known",
+				},
+				Status: uiv1alpha1.ScalityUIComponentStatus{
+					PublicPath: "/override-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, componentOverride)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, componentOverride) }()
+
+			// Update status separately since it's a subresource
+			componentOverride.Status.PublicPath = "/override-app"
+			Expect(k8sClient.Status().Update(ctx, componentOverride)).To(Succeed())
+
+			By("Creating exposer with overriding networks configuration")
+			exposerOverride := &uiv1alpha1.ScalityUIComponentExposer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-exposer-override",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          "test-ui-base-networks",
+					ScalityUIComponent: "test-component-override",
+					Networks: &uiv1alpha1.UINetworks{
+						Host:             "override.example.com",
+						IngressClassName: "override-ingress",
+						IngressAnnotations: map[string]string{
+							"nginx.ingress.kubernetes.io/ssl-redirect":      "true",
+							"nginx.ingress.kubernetes.io/custom-annotation": "new",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposerOverride)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposerOverride) }()
+
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("Reconciling the exposer with override configuration")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-override",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying Ingress was created with overridden configuration")
+			ingress := &networkingv1.Ingress{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-exposer-override",
+					Namespace: testNamespace,
+				}, ingress)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			By("Verifying networks configuration override")
+			Expect(*ingress.Spec.IngressClassName).To(Equal("override-ingress"))
+			Expect(ingress.Spec.Rules[0].Host).To(Equal("override.example.com"))
+
+			// Verify annotation merging (exposer overrides ScalityUI)
+			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"]).To(Equal("true"))
+			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/rate-limit"]).To(Equal("100"))
+			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/custom-annotation"]).To(Equal("new"))
+		})
+
+		It("should use component name as fallback path when PublicPath is empty", func() {
+			By("Creating test resources for fallback path scenario")
+			uiForPath := &uiv1alpha1.ScalityUI{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-ui-fallback"},
+				Spec: uiv1alpha1.ScalityUISpec{
+					Networks: &uiv1alpha1.UINetworks{
+						Host:             "fallback.example.com",
+						IngressClassName: "nginx",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, uiForPath)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, uiForPath) }()
+
+			componentNoPath := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-component-fallback",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					MountPath: "/usr/share/nginx/html/.well-known",
+				},
+			}
+			Expect(k8sClient.Create(ctx, componentNoPath)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, componentNoPath) }()
+
+			exposerFallback := &uiv1alpha1.ScalityUIComponentExposer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-exposer-fallback",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          "test-ui-fallback",
+					ScalityUIComponent: "test-component-fallback",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposerFallback)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposerFallback) }()
+
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("Reconciling exposer with fallback path")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-fallback",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying Ingress uses component name as fallback path")
+			ingress := &networkingv1.Ingress{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-exposer-fallback",
+					Namespace: testNamespace,
+				}, ingress)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			Expect(ingress.Spec.Rules).To(HaveLen(1))
+			Expect(ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths).To(HaveLen(2))
+
+			configPath := ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0]
+			Expect(configPath.Path).To(Equal("/test-component-fallback/.well-known/runtime-app-configuration"))
+
+			appPath := ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[1]
+			Expect(appPath.Path).To(Equal("/test-component-fallback/"))
 		})
 	})
 })
