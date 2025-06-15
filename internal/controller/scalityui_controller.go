@@ -389,7 +389,7 @@ func (r *ScalityUIReconciler) createOrUpdateIngress(ctx context.Context, ingress
 		pathType := networkingv1.PathTypePrefix
 
 		// Set annotations if provided
-		if len(scalityui.Spec.Networks.IngressAnnotations) > 0 {
+		if scalityui.Spec.Networks != nil && len(scalityui.Spec.Networks.IngressAnnotations) > 0 {
 			if ingress.Annotations == nil {
 				ingress.Annotations = make(map[string]string)
 			}
@@ -421,7 +421,7 @@ func (r *ScalityUIReconciler) createOrUpdateIngress(ctx context.Context, ingress
 		}
 
 		// Set host if provided
-		if scalityui.Spec.Networks.Host != "" {
+		if scalityui.Spec.Networks != nil && scalityui.Spec.Networks.Host != "" {
 			ingressRule.Host = scalityui.Spec.Networks.Host
 		}
 
@@ -430,12 +430,12 @@ func (r *ScalityUIReconciler) createOrUpdateIngress(ctx context.Context, ingress
 		}
 
 		// Set IngressClassName if provided
-		if scalityui.Spec.Networks.IngressClassName != "" {
+		if scalityui.Spec.Networks != nil && scalityui.Spec.Networks.IngressClassName != "" {
 			ingress.Spec.IngressClassName = &scalityui.Spec.Networks.IngressClassName
 		}
 
 		// Add TLS configuration if provided
-		if len(scalityui.Spec.Networks.TLS) > 0 {
+		if scalityui.Spec.Networks != nil && len(scalityui.Spec.Networks.TLS) > 0 {
 			ingress.Spec.TLS = make([]networkingv1.IngressTLS, len(scalityui.Spec.Networks.TLS))
 			for i, tls := range scalityui.Spec.Networks.TLS {
 				ingress.Spec.TLS[i] = networkingv1.IngressTLS{

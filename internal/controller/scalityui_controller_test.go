@@ -646,7 +646,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Spec: uiv1alpha1.ScalityUISpec{
 					Image:       imageName,
 					ProductName: productName,
-					Networks: uiv1alpha1.UINetworks{
+					Networks: &uiv1alpha1.UINetworks{
 						Host:             "test.example.com",
 						IngressClassName: "nginx",
 						IngressAnnotations: map[string]string{
