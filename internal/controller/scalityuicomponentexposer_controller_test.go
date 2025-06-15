@@ -732,7 +732,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(HaveLen(1))
 			mount := updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts[0]
 			Expect(mount.Name).To(Equal("config-volume-test-component-mount"))
-			Expect(mount.MountPath).To(Equal("/usr/share/nginx/html/.well-known"))
+			Expect(mount.MountPath).To(Equal("/usr/share/nginx/html/.well-known/configs"))
 			Expect(mount.SubPath).To(Equal(""))
 			Expect(mount.ReadOnly).To(BeTrue())
 
@@ -780,25 +780,25 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}
 
 			// First call should add mount
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/configs")
 			Expect(changed).To(BeTrue())
 			Expect(container.VolumeMounts).To(HaveLen(1))
 			Expect(container.VolumeMounts[0].Name).To(Equal("test-volume"))
-			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known"))
+			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known/configs"))
 			Expect(container.VolumeMounts[0].SubPath).To(Equal(""))
 			Expect(container.VolumeMounts[0].ReadOnly).To(BeTrue())
 
 			// Second call with same params should not change
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/configs")
 			Expect(changed).To(BeFalse())
 
 			// Modify mount and verify it gets corrected
 			container.VolumeMounts[0].ReadOnly = false
 			container.VolumeMounts[0].MountPath = "/wrong/path"
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/configs")
 			Expect(changed).To(BeTrue())
 			Expect(container.VolumeMounts[0].ReadOnly).To(BeTrue())
-			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known"))
+			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known/configs"))
 		})
 
 		It("should handle deployment not found gracefully", func() {
