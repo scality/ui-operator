@@ -32,7 +32,7 @@ type ScalityUISpec struct {
 	ProductName string      `json:"productName"`
 	Themes      Themes      `json:"themes,omitempty"`
 	Navbar      Navbar      `json:"navbar,omitempty"`
-	Networks    UINetworks  `json:"networks,omitempty"`
+	Networks    *UINetworks `json:"networks,omitempty"`
 	Auth        *AuthConfig `json:"auth,omitempty"`
 }
 

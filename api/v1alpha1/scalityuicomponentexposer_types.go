@@ -51,6 +51,10 @@ type ScalityUIComponentExposerSpec struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	SelfConfiguration *runtime.RawExtension `json:"selfConfiguration,omitempty"`
+
+	// Networks specifies network configuration for exposing the component
+	// +kubebuilder:validation:Optional
+	Networks *UINetworks `json:"networks,omitempty"`
 }
 
 // ScalityUIComponentExposerStatus defines the observed state of ScalityUIComponentExposer
