@@ -771,9 +771,17 @@ func (r *ScalityUIReconciler) reconcileDeployedUIApps(ctx context.Context, scali
 		return fmt.Errorf("failed to find exposers for UI %s: %w", scalityui.Name, err)
 	}
 
-	// Build the deployed apps list
+	// Build the deployed apps list with component deduplication
 	deployedApps := []DeployedUIApp{}
+	processedComponents := make(map[string]bool) // Track which components we've already processed
+
 	for _, exposer := range exposers {
+		// Skip if we've already processed this component
+		componentKey := exposer.Namespace + "/" + exposer.Spec.ScalityUIComponent
+		if processedComponents[componentKey] {
+			continue
+		}
+
 		component, err := r.getComponentForExposer(ctx, &exposer)
 		if err != nil {
 			logger.Error(err, "Failed to get component for exposer",
@@ -790,6 +798,7 @@ func (r *ScalityUIReconciler) reconcileDeployedUIApps(ctx context.Context, scali
 				Version:            component.Status.Version,
 			}
 			deployedApps = append(deployedApps, deployedApp)
+			processedComponents[componentKey] = true // Mark as processed
 		}
 	}
 
