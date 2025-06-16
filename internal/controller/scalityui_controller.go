@@ -579,7 +579,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Initialize status if needed
 	if scalityui.Status.Phase == "" {
-		scalityui.Status.Phase = PhasePending
+		scalityui.Status.Phase = uiscalitycomv1alpha1.PhasePending
 		if err := r.updateScalityUIStatus(ctx, scalityui); err != nil {
 			r.Log.Error(err, "Failed to initialize status")
 			// Continue with reconciliation even if status update fails
@@ -587,7 +587,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Set progressing condition at the start of reconciliation
-	r.setScalityUIConditionWithError(scalityui, ConditionTypeProgressing, ReasonReconciling, nil)
+	r.setScalityUIConditionWithError(scalityui, uiscalitycomv1alpha1.ConditionTypeProgressing, uiscalitycomv1alpha1.ReasonReconciling, nil)
 	if err := r.updateScalityUIStatus(ctx, scalityui); err != nil {
 		r.Log.Error(err, "Failed to update progressing status")
 	}
@@ -596,7 +596,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	configJSON, err := createConfigJSON(scalityui)
 	if err != nil {
 		r.Log.Error(err, "Failed to create configJSON")
-		r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonConfigurationError, err)
+		r.handleReconcileError(ctx, scalityui, uiscalitycomv1alpha1.ConditionTypeReady, uiscalitycomv1alpha1.ReasonConfigurationError, err)
 		return ctrl.Result{}, err
 	}
 
@@ -608,7 +608,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Reconcile deployed-ui-apps ConfigMap by collecting all exposers that reference this UI
 	if err := r.reconcileDeployedUIApps(ctx, scalityui); err != nil {
 		r.Log.Error(err, "Failed to reconcile deployed UI apps")
-		r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonReconcileError, err)
+		r.handleReconcileError(ctx, scalityui, uiscalitycomv1alpha1.ConditionTypeReady, uiscalitycomv1alpha1.ReasonReconcileError, err)
 		return ctrl.Result{}, err
 	}
 
@@ -633,7 +633,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	configMapResult, err := r.createOrUpdateOwnedConfigMap(ctx, scalityui, configMap, configJsonData)
 	if err != nil {
 		r.Log.Error(err, "Failed to create or update ConfigMap for config.json")
-		r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonResourceError, err)
+		r.handleReconcileError(ctx, scalityui, uiscalitycomv1alpha1.ConditionTypeReady, uiscalitycomv1alpha1.ReasonResourceError, err)
 		return ctrl.Result{}, err
 	}
 
@@ -651,7 +651,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	deploymentResult, err := r.createOrUpdateDeployment(ctx, deploy, scalityui, configHash, deployedAppsHash)
 	if err != nil {
 		r.Log.Error(err, "Failed to create or update deployment")
-		r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonResourceError, err)
+		r.handleReconcileError(ctx, scalityui, uiscalitycomv1alpha1.ConditionTypeReady, uiscalitycomv1alpha1.ReasonResourceError, err)
 		return ctrl.Result{}, err
 	}
 
@@ -680,7 +680,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	serviceResult, err := r.createOrUpdateService(ctx, scalityui)
 	if err != nil {
 		r.Log.Error(err, "Failed to create or update Service")
-		r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonResourceError, err)
+		r.handleReconcileError(ctx, scalityui, uiscalitycomv1alpha1.ConditionTypeReady, uiscalitycomv1alpha1.ReasonResourceError, err)
 		return ctrl.Result{}, err
 	}
 	logOperationResult(r.Log, serviceResult, "Service", scalityui.Name)
@@ -699,7 +699,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		ingressResult, err := r.createOrUpdateIngress(ctx, ingress, scalityui)
 		if err != nil {
 			r.Log.Error(err, "Failed to create or update Ingress")
-			r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonResourceError, err)
+			r.handleReconcileError(ctx, scalityui, uiscalitycomv1alpha1.ConditionTypeReady, uiscalitycomv1alpha1.ReasonResourceError, err)
 			return ctrl.Result{}, err
 		}
 

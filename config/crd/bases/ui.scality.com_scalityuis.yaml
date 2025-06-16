@@ -355,7 +355,7 @@ spec:
             properties:
               conditions:
                 description: Conditions represent the latest available observations
-                  of the ScalityUI's current state
+                  of the resource's current state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -415,7 +415,7 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               phase:
-                description: Phase represents the current phase of the ScalityUI deployment
+                description: Phase represents the current phase of the resource deployment
                 enum:
                 - Pending
                 - Progressing

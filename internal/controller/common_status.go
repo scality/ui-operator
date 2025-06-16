@@ -11,6 +11,13 @@ import (
 	uiscalitycomv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 )
 
+// StatusAware interface defines methods that resources with status should implement
+// This interface is in the controller package to avoid controller-gen issues
+type StatusAware interface {
+	GetCommonStatus() *uiscalitycomv1alpha1.CommonStatus
+	SetCommonStatus(status uiscalitycomv1alpha1.CommonStatus)
+}
+
 // CommonStatusReconciler provides generic status reconciliation functionality
 type CommonStatusReconciler struct {
 	client.Client
@@ -23,13 +30,13 @@ func NewCommonStatusReconciler(client client.Client) *CommonStatusReconciler {
 	}
 }
 
-// UpdateResourceStatus updates the status of a resource that implements StatusAware
+// UpdateResourceStatus updates the status of a resource
 func (r *CommonStatusReconciler) UpdateResourceStatus(ctx context.Context, obj client.Object) error {
 	return r.Status().Update(ctx, obj)
 }
 
 // UpdateResourceConditions updates the conditions of a StatusAware resource
-func (r *CommonStatusReconciler) UpdateResourceConditions(statusAware uiscalitycomv1alpha1.StatusAware,
+func (r *CommonStatusReconciler) UpdateResourceConditions(statusAware StatusAware,
 	conditionUpdates []ConditionUpdate) {
 
 	now := metav1.NewTime(time.Now())
@@ -41,7 +48,7 @@ func (r *CommonStatusReconciler) UpdateResourceConditions(statusAware uiscalityc
 }
 
 // UpdateResourcePhase updates the phase of a StatusAware resource based on its conditions
-func (r *CommonStatusReconciler) UpdateResourcePhase(statusAware uiscalitycomv1alpha1.StatusAware) {
+func (r *CommonStatusReconciler) UpdateResourcePhase(statusAware StatusAware) {
 	commonStatus := statusAware.GetCommonStatus()
 	readyCondition := meta.FindStatusCondition(commonStatus.Conditions, uiscalitycomv1alpha1.ConditionTypeReady)
 	progressingCondition := meta.FindStatusCondition(commonStatus.Conditions, uiscalitycomv1alpha1.ConditionTypeProgressing)
@@ -78,8 +85,8 @@ func (r *CommonStatusReconciler) setResourceCondition(commonStatus *uiscalitycom
 	meta.SetStatusCondition(&commonStatus.Conditions, condition)
 }
 
-// SetResourceConditionWithError is a helper to set error conditions
-func (r *CommonStatusReconciler) SetResourceConditionWithError(statusAware uiscalitycomv1alpha1.StatusAware,
+// SetResourceConditionWithError is a helper to set error conditions on any StatusAware resource
+func (r *CommonStatusReconciler) SetResourceConditionWithError(statusAware StatusAware,
 	conditionType, reason string, err error, observedGeneration int64) {
 
 	now := metav1.NewTime(time.Now())

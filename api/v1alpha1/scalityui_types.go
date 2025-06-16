@@ -162,12 +162,12 @@ type ScalityUIStatus struct {
 	CommonStatus `json:",inline"`
 }
 
-// GetCommonStatus implements StatusAware interface
+// GetCommonStatus returns a pointer to the embedded CommonStatus
 func (s *ScalityUIStatus) GetCommonStatus() *CommonStatus {
 	return &s.CommonStatus
 }
 
-// SetCommonStatus implements StatusAware interface
+// SetCommonStatus updates the embedded CommonStatus
 func (s *ScalityUIStatus) SetCommonStatus(status CommonStatus) {
 	s.CommonStatus = status
 }

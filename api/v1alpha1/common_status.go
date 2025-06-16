@@ -18,12 +18,6 @@ type CommonStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
-// StatusAware interface defines methods that resources with status should implement
-type StatusAware interface {
-	GetCommonStatus() *CommonStatus
-	SetCommonStatus(status CommonStatus)
-}
-
 // Common phase constants
 const (
 	PhasePending     = "Pending"
