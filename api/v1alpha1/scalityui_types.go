@@ -157,6 +157,19 @@ type AuthConfig struct {
 type ScalityUIStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	// Embed CommonStatus to inherit phase and conditions
+	CommonStatus `json:",inline"`
+}
+
+// GetCommonStatus returns a pointer to the embedded CommonStatus
+func (s *ScalityUIStatus) GetCommonStatus() *CommonStatus {
+	return &s.CommonStatus
+}
+
+// SetCommonStatus updates the embedded CommonStatus
+func (s *ScalityUIStatus) SetCommonStatus(status CommonStatus) {
+	s.CommonStatus = status
 }
 
 // +kubebuilder:object:root=true
