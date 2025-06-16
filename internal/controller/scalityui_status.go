@@ -1,19 +1,3 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package controller
 
 import (
@@ -203,6 +187,14 @@ func (r *ScalityUIReconciler) setScalityUIConditionWithError(scalityui *uiscalit
 	}
 
 	setScalityUICondition(scalityui, conditionType, status, reason, message, now)
+}
+
+// handleReconcileError is a helper function that handles reconciliation errors
+func (r *ScalityUIReconciler) handleReconcileError(ctx context.Context, scalityui *uiscalitycomv1alpha1.ScalityUI, conditionType, reason string, err error) {
+	r.setScalityUIConditionWithError(scalityui, conditionType, reason, err)
+	if statusErr := r.updateScalityUIStatus(ctx, scalityui); statusErr != nil {
+		r.Log.Error(statusErr, "Failed to update status after error", "originalError", err, "reason", reason)
+	}
 }
 
 // isDeploymentProgressing checks if the deployment is progressing

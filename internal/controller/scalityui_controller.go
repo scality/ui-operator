@@ -596,10 +596,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	configJSON, err := createConfigJSON(scalityui)
 	if err != nil {
 		r.Log.Error(err, "Failed to create configJSON")
-		r.setScalityUIConditionWithError(scalityui, ConditionTypeReady, ReasonConfigurationError, err)
-		if statusErr := r.updateScalityUIStatus(ctx, scalityui); statusErr != nil {
-			r.Log.Error(statusErr, "Failed to update status after config error")
-		}
+		r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonConfigurationError, err)
 		return ctrl.Result{}, err
 	}
 
@@ -611,10 +608,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Reconcile deployed-ui-apps ConfigMap by collecting all exposers that reference this UI
 	if err := r.reconcileDeployedUIApps(ctx, scalityui); err != nil {
 		r.Log.Error(err, "Failed to reconcile deployed UI apps")
-		r.setScalityUIConditionWithError(scalityui, ConditionTypeReady, ReasonReconcileError, err)
-		if statusErr := r.updateScalityUIStatus(ctx, scalityui); statusErr != nil {
-			r.Log.Error(statusErr, "Failed to update status after deployed apps error")
-		}
+		r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonReconcileError, err)
 		return ctrl.Result{}, err
 	}
 
@@ -639,10 +633,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	configMapResult, err := r.createOrUpdateOwnedConfigMap(ctx, scalityui, configMap, configJsonData)
 	if err != nil {
 		r.Log.Error(err, "Failed to create or update ConfigMap for config.json")
-		r.setScalityUIConditionWithError(scalityui, ConditionTypeReady, ReasonResourceError, err)
-		if statusErr := r.updateScalityUIStatus(ctx, scalityui); statusErr != nil {
-			r.Log.Error(statusErr, "Failed to update status after ConfigMap error")
-		}
+		r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonResourceError, err)
 		return ctrl.Result{}, err
 	}
 
@@ -660,10 +651,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	deploymentResult, err := r.createOrUpdateDeployment(ctx, deploy, scalityui, configHash, deployedAppsHash)
 	if err != nil {
 		r.Log.Error(err, "Failed to create or update deployment")
-		r.setScalityUIConditionWithError(scalityui, ConditionTypeReady, ReasonResourceError, err)
-		if statusErr := r.updateScalityUIStatus(ctx, scalityui); statusErr != nil {
-			r.Log.Error(statusErr, "Failed to update status after Deployment error")
-		}
+		r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonResourceError, err)
 		return ctrl.Result{}, err
 	}
 
@@ -692,10 +680,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	serviceResult, err := r.createOrUpdateService(ctx, scalityui)
 	if err != nil {
 		r.Log.Error(err, "Failed to create or update Service")
-		r.setScalityUIConditionWithError(scalityui, ConditionTypeReady, ReasonResourceError, err)
-		if statusErr := r.updateScalityUIStatus(ctx, scalityui); statusErr != nil {
-			r.Log.Error(statusErr, "Failed to update status after Service error")
-		}
+		r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonResourceError, err)
 		return ctrl.Result{}, err
 	}
 	logOperationResult(r.Log, serviceResult, "Service", scalityui.Name)
@@ -714,10 +699,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		ingressResult, err := r.createOrUpdateIngress(ctx, ingress, scalityui)
 		if err != nil {
 			r.Log.Error(err, "Failed to create or update Ingress")
-			r.setScalityUIConditionWithError(scalityui, ConditionTypeReady, ReasonResourceError, err)
-			if statusErr := r.updateScalityUIStatus(ctx, scalityui); statusErr != nil {
-				r.Log.Error(statusErr, "Failed to update status after Ingress error")
-			}
+			r.handleReconcileError(ctx, scalityui, ConditionTypeReady, ReasonResourceError, err)
 			return ctrl.Result{}, err
 		}
 
