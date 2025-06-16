@@ -158,16 +158,18 @@ type ScalityUIStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Phase represents the current phase of the ScalityUI deployment
-	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Failed
-	Phase string `json:"phase,omitempty"`
+	// Embed CommonStatus to inherit phase and conditions
+	CommonStatus `json:",inline"`
+}
 
-	// Conditions represent the latest available observations of the ScalityUI's current state
-	// +patchMergeKey=type
-	// +patchStrategy=merge
-	// +listType=map
-	// +listMapKey=type
-	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
+// GetCommonStatus implements StatusAware interface
+func (s *ScalityUIStatus) GetCommonStatus() *CommonStatus {
+	return &s.CommonStatus
+}
+
+// SetCommonStatus implements StatusAware interface
+func (s *ScalityUIStatus) SetCommonStatus(status CommonStatus) {
+	s.CommonStatus = status
 }
 
 // +kubebuilder:object:root=true

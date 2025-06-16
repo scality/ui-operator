@@ -2,113 +2,119 @@ package controller
 
 import (
 	"context"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	uiscalitycomv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 )
 
-const (
-	PhasePending     = "Pending"
-	PhaseProgressing = "Progressing"
-	PhaseReady       = "Ready"
-	PhaseFailed      = "Failed"
-)
+// Note: Constants have been moved to api/v1alpha1/common_status.go for reusability
 
-const (
-	ConditionTypeReady       = "Ready"
-	ConditionTypeProgressing = "Progressing"
-)
-
-const (
-	ReasonReady              = "Ready"
-	ReasonNotReady           = "NotReady"
-	ReasonProgressing        = "Progressing"
-	ReasonReconciling        = "Reconciling"
-	ReasonReconcileError     = "ReconcileError"
-	ReasonConfigurationError = "ConfigurationError"
-	ReasonResourceError      = "ResourceError"
-)
-
-// updateScalityUIStatus updates the ScalityUI status
+// updateScalityUIStatus updates the ScalityUI status using the common status reconciler
 func (r *ScalityUIReconciler) updateScalityUIStatus(ctx context.Context, scalityui *uiscalitycomv1alpha1.ScalityUI) error {
 	// Check the state of resources
 	deployment, deploymentErr := r.getScalityUIDeployment(ctx, scalityui)
 	service, serviceErr := r.getScalityUIService(ctx, scalityui)
 	ingress, ingressErr := r.getScalityUIIngress(ctx, scalityui)
 
-	// Update conditions
-	r.updateScalityUIConditions(scalityui, deployment, service, ingress, deploymentErr, serviceErr, ingressErr)
+	// Create common status reconciler
+	commonStatusReconciler := NewCommonStatusReconciler(r.Client)
 
-	// Update phase based on conditions
-	r.updateScalityUIPhase(scalityui)
+	// Update conditions using the common reconciler
+	r.updateScalityUIConditionsWithCommonReconciler(scalityui, deployment, service, ingress,
+		deploymentErr, serviceErr, ingressErr, commonStatusReconciler)
+
+	// Update phase based on conditions using the common reconciler
+	commonStatusReconciler.UpdateResourcePhase(&scalityui.Status)
 
 	// Update the status
-	return r.Status().Update(ctx, scalityui)
+	return commonStatusReconciler.UpdateResourceStatus(ctx, scalityui)
 }
 
-// updateScalityUIConditions updates the ScalityUI conditions
-func (r *ScalityUIReconciler) updateScalityUIConditions(scalityui *uiscalitycomv1alpha1.ScalityUI,
+// updateScalityUIConditionsWithCommonReconciler updates the ScalityUI conditions using the common reconciler
+func (r *ScalityUIReconciler) updateScalityUIConditionsWithCommonReconciler(scalityui *uiscalitycomv1alpha1.ScalityUI,
 	deployment *appsv1.Deployment, service *corev1.Service, ingress *networkingv1.Ingress,
-	deploymentErr, serviceErr, ingressErr error) {
+	deploymentErr, serviceErr, ingressErr error, commonStatusReconciler *CommonStatusReconciler) {
 
-	now := metav1.NewTime(time.Now())
+	var conditionUpdates []ConditionUpdate
 
 	// Progressing condition
 	if deploymentErr != nil || serviceErr != nil || ingressErr != nil {
-		setScalityUICondition(scalityui, ConditionTypeProgressing, metav1.ConditionFalse,
-			ReasonReconcileError, "Error during resource reconciliation", now)
+		conditionUpdates = append(conditionUpdates, ConditionUpdate{
+			Type:    uiscalitycomv1alpha1.ConditionTypeProgressing,
+			Status:  metav1.ConditionFalse,
+			Reason:  uiscalitycomv1alpha1.ReasonReconcileError,
+			Message: "Error during resource reconciliation",
+		})
 	} else if deployment != nil && isDeploymentProgressing(deployment) {
-		setScalityUICondition(scalityui, ConditionTypeProgressing, metav1.ConditionTrue,
-			ReasonProgressing, "Deployment in progress", now)
+		conditionUpdates = append(conditionUpdates, ConditionUpdate{
+			Type:    uiscalitycomv1alpha1.ConditionTypeProgressing,
+			Status:  metav1.ConditionTrue,
+			Reason:  uiscalitycomv1alpha1.ReasonProgressing,
+			Message: "Deployment in progress",
+		})
 	} else {
-		setScalityUICondition(scalityui, ConditionTypeProgressing, metav1.ConditionFalse,
-			ReasonProgressing, "Deployment stable", now)
+		conditionUpdates = append(conditionUpdates, ConditionUpdate{
+			Type:    uiscalitycomv1alpha1.ConditionTypeProgressing,
+			Status:  metav1.ConditionFalse,
+			Reason:  uiscalitycomv1alpha1.ReasonProgressing,
+			Message: "Deployment stable",
+		})
 	}
 
 	// Ready condition
 	if deploymentErr != nil || serviceErr != nil || ingressErr != nil {
-		setScalityUICondition(scalityui, ConditionTypeReady, metav1.ConditionFalse,
-			ReasonNotReady, "Error with resources", now)
+		conditionUpdates = append(conditionUpdates, ConditionUpdate{
+			Type:    uiscalitycomv1alpha1.ConditionTypeReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  uiscalitycomv1alpha1.ReasonNotReady,
+			Message: "Error with resources",
+		})
 	} else if deployment == nil || service == nil || ingress == nil {
-		setScalityUICondition(scalityui, ConditionTypeReady, metav1.ConditionFalse,
-			ReasonNotReady, "Missing resources", now)
+		conditionUpdates = append(conditionUpdates, ConditionUpdate{
+			Type:    uiscalitycomv1alpha1.ConditionTypeReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  uiscalitycomv1alpha1.ReasonNotReady,
+			Message: "Missing resources",
+		})
 	} else if deployment.Status.ReadyReplicas == 0 {
-		setScalityUICondition(scalityui, ConditionTypeReady, metav1.ConditionFalse,
-			ReasonNotReady, "No replicas ready", now)
+		conditionUpdates = append(conditionUpdates, ConditionUpdate{
+			Type:    uiscalitycomv1alpha1.ConditionTypeReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  uiscalitycomv1alpha1.ReasonNotReady,
+			Message: "No replicas ready",
+		})
 	} else {
-		setScalityUICondition(scalityui, ConditionTypeReady, metav1.ConditionTrue,
-			ReasonReady, "All components are ready", now)
+		conditionUpdates = append(conditionUpdates, ConditionUpdate{
+			Type:    uiscalitycomv1alpha1.ConditionTypeReady,
+			Status:  metav1.ConditionTrue,
+			Reason:  uiscalitycomv1alpha1.ReasonReady,
+			Message: "All components are ready",
+		})
 	}
-}
 
-// updateScalityUIPhase updates the phase based on conditions
-func (r *ScalityUIReconciler) updateScalityUIPhase(scalityui *uiscalitycomv1alpha1.ScalityUI) {
-	readyCondition := meta.FindStatusCondition(scalityui.Status.Conditions, ConditionTypeReady)
-	progressingCondition := meta.FindStatusCondition(scalityui.Status.Conditions, ConditionTypeProgressing)
+	// Apply condition updates with ObservedGeneration
+	for _, update := range conditionUpdates {
+		commonStatusReconciler.SetResourceConditionWithError(&scalityui.Status,
+			update.Type, update.Reason, nil, scalityui.Generation)
 
-	if readyCondition != nil && readyCondition.Status == metav1.ConditionTrue {
-		scalityui.Status.Phase = PhaseReady
-	} else if progressingCondition != nil && progressingCondition.Status == metav1.ConditionTrue {
-		scalityui.Status.Phase = PhaseProgressing
-	} else if readyCondition != nil && readyCondition.Status == metav1.ConditionFalse {
-		if readyCondition.Reason == ReasonReconcileError || readyCondition.Reason == ReasonConfigurationError {
-			scalityui.Status.Phase = PhaseFailed
-		} else {
-			scalityui.Status.Phase = PhaseProgressing
+		// Override the condition with the correct status and message
+		commonStatus := scalityui.Status.GetCommonStatus()
+		for i := range commonStatus.Conditions {
+			if commonStatus.Conditions[i].Type == update.Type {
+				commonStatus.Conditions[i].Status = update.Status
+				commonStatus.Conditions[i].Message = update.Message
+				break
+			}
 		}
-	} else {
-		scalityui.Status.Phase = PhasePending
 	}
 }
 
-// Utility functions to retrieve resources
+// Utility functions to retrieve resources (kept as ScalityUI-specific)
 func (r *ScalityUIReconciler) getScalityUIDeployment(ctx context.Context, scalityui *uiscalitycomv1alpha1.ScalityUI) (*appsv1.Deployment, error) {
 	deployment := &appsv1.Deployment{}
 	err := r.Client.Get(ctx, client.ObjectKey{
@@ -157,39 +163,15 @@ func (r *ScalityUIReconciler) getScalityUIIngress(ctx context.Context, scalityui
 	return ingress, nil
 }
 
-// setScalityUICondition sets a condition on the ScalityUI status
-func setScalityUICondition(scalityui *uiscalitycomv1alpha1.ScalityUI, conditionType string,
-	status metav1.ConditionStatus, reason, message string, now metav1.Time) {
-
-	condition := metav1.Condition{
-		Type:               conditionType,
-		Status:             status,
-		LastTransitionTime: now,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: scalityui.Generation,
-	}
-
-	meta.SetStatusCondition(&scalityui.Status.Conditions, condition)
-}
-
-// setScalityUIConditionWithError is a helper to set error conditions
+// setScalityUIConditionWithError is a helper to set error conditions (kept for backward compatibility)
 func (r *ScalityUIReconciler) setScalityUIConditionWithError(scalityui *uiscalitycomv1alpha1.ScalityUI,
 	conditionType, reason string, err error) {
 
-	now := metav1.NewTime(time.Now())
-	message := "Operation successful"
-	status := metav1.ConditionTrue
-
-	if err != nil {
-		message = err.Error()
-		status = metav1.ConditionFalse
-	}
-
-	setScalityUICondition(scalityui, conditionType, status, reason, message, now)
+	commonStatusReconciler := NewCommonStatusReconciler(r.Client)
+	commonStatusReconciler.SetResourceConditionWithError(&scalityui.Status, conditionType, reason, err, scalityui.Generation)
 }
 
-// handleReconcileError is a helper function that handles reconciliation errors
+// handleReconcileError is a helper function that handles reconciliation errors (kept for backward compatibility)
 func (r *ScalityUIReconciler) handleReconcileError(ctx context.Context, scalityui *uiscalitycomv1alpha1.ScalityUI, conditionType, reason string, err error) {
 	r.setScalityUIConditionWithError(scalityui, conditionType, reason, err)
 	if statusErr := r.updateScalityUIStatus(ctx, scalityui); statusErr != nil {
@@ -197,7 +179,7 @@ func (r *ScalityUIReconciler) handleReconcileError(ctx context.Context, scalityu
 	}
 }
 
-// isDeploymentProgressing checks if the deployment is progressing
+// isDeploymentProgressing checks if the deployment is progressing (kept as utility function)
 func isDeploymentProgressing(deployment *appsv1.Deployment) bool {
 	for _, condition := range deployment.Status.Conditions {
 		if condition.Type == appsv1.DeploymentProgressing {
