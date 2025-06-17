@@ -36,14 +36,32 @@ func (r *CommonStatusReconciler) UpdateResourceStatus(ctx context.Context, obj c
 }
 
 // UpdateResourceConditions updates the conditions of a StatusAware resource
-func (r *CommonStatusReconciler) UpdateResourceConditions(statusAware StatusAware,
+// This method automatically uses the object's current generation for observedGeneration
+func (r *CommonStatusReconciler) UpdateResourceConditions(obj client.Object, statusAware StatusAware,
 	conditionUpdates []ConditionUpdate) {
 
-	now := metav1.NewTime(time.Now())
-	commonStatus := statusAware.GetCommonStatus()
+	for _, update := range conditionUpdates {
+		observedGeneration := update.ObservedGeneration
+		if observedGeneration == 0 {
+			// If not explicitly set, use the object's current generation
+			observedGeneration = obj.GetGeneration()
+		}
+		r.SetResourceCondition(statusAware, update.Type, update.Reason, update.Message, update.Status, observedGeneration)
+	}
+}
+
+// UpdateResourceConditionsWithGeneration updates the conditions using a specific generation
+// Use this when you want to override the automatic generation detection
+func (r *CommonStatusReconciler) UpdateResourceConditionsWithGeneration(statusAware StatusAware,
+	conditionUpdates []ConditionUpdate, observedGeneration int64) {
 
 	for _, update := range conditionUpdates {
-		r.setResourceCondition(commonStatus, update.Type, update.Status, update.Reason, update.Message, now)
+		generation := observedGeneration
+		if update.ObservedGeneration != 0 {
+			// Allow per-condition override if specified
+			generation = update.ObservedGeneration
+		}
+		r.SetResourceCondition(statusAware, update.Type, update.Reason, update.Message, update.Status, generation)
 	}
 }
 
@@ -69,36 +87,13 @@ func (r *CommonStatusReconciler) UpdateResourcePhase(statusAware StatusAware) {
 	}
 }
 
-// setResourceCondition sets a condition on a CommonStatus
-func (r *CommonStatusReconciler) setResourceCondition(commonStatus *uiscalitycomv1alpha1.CommonStatus,
-	conditionType string, status metav1.ConditionStatus, reason, message string, now metav1.Time) {
-
-	condition := metav1.Condition{
-		Type:               conditionType,
-		Status:             status,
-		LastTransitionTime: now,
-		Reason:             reason,
-		Message:            message,
-		// Note: ObservedGeneration will be set by the specific controller
-	}
-
-	meta.SetStatusCondition(&commonStatus.Conditions, condition)
-}
-
-// SetResourceConditionWithError is a helper to set error conditions on any StatusAware resource
-func (r *CommonStatusReconciler) SetResourceConditionWithError(statusAware StatusAware,
-	conditionType, reason string, err error, observedGeneration int64) {
+// SetResourceCondition sets a condition on a StatusAware resource with custom message
+func (r *CommonStatusReconciler) SetResourceCondition(statusAware StatusAware,
+	conditionType, reason, message string, status metav1.ConditionStatus, observedGeneration int64) {
 
 	now := metav1.NewTime(time.Now())
-	message := "Operation successful"
-	status := metav1.ConditionTrue
-
-	if err != nil {
-		message = err.Error()
-		status = metav1.ConditionFalse
-	}
-
 	commonStatus := statusAware.GetCommonStatus()
+
 	condition := metav1.Condition{
 		Type:               conditionType,
 		Status:             status,
@@ -111,10 +106,47 @@ func (r *CommonStatusReconciler) SetResourceConditionWithError(statusAware Statu
 	meta.SetStatusCondition(&commonStatus.Conditions, condition)
 }
 
+// SetResourceConditionFromObject sets a condition using the object's current generation
+func (r *CommonStatusReconciler) SetResourceConditionFromObject(obj client.Object, statusAware StatusAware,
+	conditionType, reason, message string, status metav1.ConditionStatus) {
+
+	r.SetResourceCondition(statusAware, conditionType, reason, message, status, obj.GetGeneration())
+}
+
+// SetResourceConditionError sets an error condition on a StatusAware resource
+func (r *CommonStatusReconciler) SetResourceConditionError(statusAware StatusAware,
+	conditionType, reason string, err error, observedGeneration int64) {
+
+	message := err.Error()
+	r.SetResourceCondition(statusAware, conditionType, reason, message, metav1.ConditionFalse, observedGeneration)
+}
+
+// SetResourceConditionErrorFromObject sets an error condition using the object's current generation
+func (r *CommonStatusReconciler) SetResourceConditionErrorFromObject(obj client.Object, statusAware StatusAware,
+	conditionType, reason string, err error) {
+
+	r.SetResourceConditionError(statusAware, conditionType, reason, err, obj.GetGeneration())
+}
+
+// SetResourceConditionSuccess sets a success condition on a StatusAware resource
+func (r *CommonStatusReconciler) SetResourceConditionSuccess(statusAware StatusAware,
+	conditionType, reason, message string, observedGeneration int64) {
+
+	r.SetResourceCondition(statusAware, conditionType, reason, message, metav1.ConditionTrue, observedGeneration)
+}
+
+// SetResourceConditionSuccessFromObject sets a success condition using the object's current generation
+func (r *CommonStatusReconciler) SetResourceConditionSuccessFromObject(obj client.Object, statusAware StatusAware,
+	conditionType, reason, message string) {
+
+	r.SetResourceConditionSuccess(statusAware, conditionType, reason, message, obj.GetGeneration())
+}
+
 // ConditionUpdate represents a condition update to be applied
 type ConditionUpdate struct {
-	Type    string
-	Status  metav1.ConditionStatus
-	Reason  string
-	Message string
+	Type               string
+	Status             metav1.ConditionStatus
+	Reason             string
+	Message            string
+	ObservedGeneration int64 // Optional: if 0, will use the object's current generation
 }
