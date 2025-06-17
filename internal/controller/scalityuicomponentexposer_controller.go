@@ -833,8 +833,8 @@ func (r *ScalityUIComponentExposerReconciler) reconcileIngress(
 	ui *uiv1alpha1.ScalityUI,
 	logger logr.Logger,
 ) error {
-	// Merge networks configuration (exposer config overrides UI config)
-	networksConfig, path := r.mergeNetworksConfig(exposer, ui, component)
+	// Inherit networks configuration from ScalityUI
+	networksConfig, path := r.getNetworksConfig(exposer, ui, component)
 
 	// If networks is not configured, skip ingress creation
 	// (any existing ingress will be garbage collected automatically by Kubernetes)
@@ -867,28 +867,13 @@ func (r *ScalityUIComponentExposerReconciler) reconcileIngress(
 	return nil
 }
 
-// mergeNetworksConfig merges networks configuration with inheritance and override logic
-func (r *ScalityUIComponentExposerReconciler) mergeNetworksConfig(
+// getNetworksConfig inherits networks configuration from ScalityUI
+func (r *ScalityUIComponentExposerReconciler) getNetworksConfig(
 	exposer *uiv1alpha1.ScalityUIComponentExposer,
 	ui *uiv1alpha1.ScalityUI,
 	component *uiv1alpha1.ScalityUIComponent,
 ) (*uiv1alpha1.UINetworks, string) {
-	// Start with default configuration
-	merged := &uiv1alpha1.UINetworks{}
 	var path string
-	hasNetworks := false
-
-	// Inherit from ScalityUI Networks if available
-	if ui.Spec.Networks != nil {
-		hasNetworks = true
-		merged.IngressClassName = ui.Spec.Networks.IngressClassName
-		merged.Host = ui.Spec.Networks.Host
-		merged.TLS = ui.Spec.Networks.TLS
-		merged.IngressAnnotations = make(map[string]string)
-		for k, v := range ui.Spec.Networks.IngressAnnotations {
-			merged.IngressAnnotations[k] = v
-		}
-	}
 
 	// Set default path from component's publicPath if available
 	if component.Status.PublicPath != "" {
@@ -897,33 +882,25 @@ func (r *ScalityUIComponentExposerReconciler) mergeNetworksConfig(
 		path = "/" + component.Name // fallback path
 	}
 
-	// Override with exposer-specific configuration if provided
-	if exposer.Spec.Networks != nil {
-		hasNetworks = true
-		if exposer.Spec.Networks.IngressClassName != "" {
-			merged.IngressClassName = exposer.Spec.Networks.IngressClassName
+	// Inherit from ScalityUI Networks if available
+	if ui.Spec.Networks != nil {
+		merged := &uiv1alpha1.UINetworks{
+			IngressClassName: ui.Spec.Networks.IngressClassName,
+			Host:             ui.Spec.Networks.Host,
+			TLS:              ui.Spec.Networks.TLS,
 		}
-		if exposer.Spec.Networks.Host != "" {
-			merged.Host = exposer.Spec.Networks.Host
+
+		// Copy annotations
+		merged.IngressAnnotations = make(map[string]string)
+		for k, v := range ui.Spec.Networks.IngressAnnotations {
+			merged.IngressAnnotations[k] = v
 		}
-		if len(exposer.Spec.Networks.TLS) > 0 {
-			merged.TLS = exposer.Spec.Networks.TLS
-		}
-		if len(exposer.Spec.Networks.IngressAnnotations) > 0 {
-			if merged.IngressAnnotations == nil {
-				merged.IngressAnnotations = make(map[string]string)
-			}
-			for k, v := range exposer.Spec.Networks.IngressAnnotations {
-				merged.IngressAnnotations[k] = v
-			}
-		}
+
+		return merged, path
 	}
 
-	if !hasNetworks {
-		return nil, ""
-	}
-
-	return merged, path
+	// No networks configuration available
+	return nil, ""
 }
 
 // buildIngress configures the Ingress resource

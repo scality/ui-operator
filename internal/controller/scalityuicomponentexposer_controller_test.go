@@ -1091,101 +1091,94 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(ingressCondition.Message).To(ContainSubstring("Ingress not needed"))
 		})
 
-		It("should override ScalityUI networks configuration with exposer-specific networks", func() {
-			By("Creating ScalityUI with base networks configuration")
-			uiWithBaseNetworks := &uiv1alpha1.ScalityUI{
+		It("should inherit networks configuration from ScalityUI only", func() {
+			By("Creating ScalityUI with networks configuration")
+			uiWithNetworks := &uiv1alpha1.ScalityUI{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-ui-base-networks",
+					Name: "test-ui-inherit-networks",
 				},
 				Spec: uiv1alpha1.ScalityUISpec{
 					Image:       "scality/ui:latest",
 					ProductName: "Test Product",
 					Networks: &uiv1alpha1.UINetworks{
-						Host:             "base.example.com",
-						IngressClassName: "base-ingress",
+						Host:             "inherit.example.com",
+						IngressClassName: "inherit-ingress",
 						IngressAnnotations: map[string]string{
-							"nginx.ingress.kubernetes.io/ssl-redirect": "false",
-							"nginx.ingress.kubernetes.io/rate-limit":   "100",
+							"nginx.ingress.kubernetes.io/ssl-redirect": "true",
+							"nginx.ingress.kubernetes.io/rate-limit":   "200",
 						},
 					},
 				},
 			}
-			Expect(k8sClient.Create(ctx, uiWithBaseNetworks)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, uiWithBaseNetworks) }()
+			Expect(k8sClient.Create(ctx, uiWithNetworks)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, uiWithNetworks) }()
 
-			By("Creating component for override test")
-			componentOverride := &uiv1alpha1.ScalityUIComponent{
+			By("Creating component for inheritance test")
+			componentInherit := &uiv1alpha1.ScalityUIComponent{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-component-override",
+					Name:      "test-component-inherit",
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
 					MountPath: "/usr/share/nginx/html/.well-known",
 				},
 				Status: uiv1alpha1.ScalityUIComponentStatus{
-					PublicPath: "/override-app",
+					PublicPath: "/inherit-app",
 				},
 			}
-			Expect(k8sClient.Create(ctx, componentOverride)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, componentOverride) }()
+			Expect(k8sClient.Create(ctx, componentInherit)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, componentInherit) }()
 
 			// Update status separately since it's a subresource
-			componentOverride.Status.PublicPath = "/override-app"
-			Expect(k8sClient.Status().Update(ctx, componentOverride)).To(Succeed())
+			componentInherit.Status.PublicPath = "/inherit-app"
+			Expect(k8sClient.Status().Update(ctx, componentInherit)).To(Succeed())
 
-			By("Creating exposer with overriding networks configuration")
-			exposerOverride := &uiv1alpha1.ScalityUIComponentExposer{
+			By("Creating exposer that inherits networks configuration from ScalityUI")
+			exposerInherit := &uiv1alpha1.ScalityUIComponentExposer{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-exposer-override",
+					Name:      "test-exposer-inherit",
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          "test-ui-base-networks",
-					ScalityUIComponent: "test-component-override",
-					Networks: &uiv1alpha1.UINetworks{
-						Host:             "override.example.com",
-						IngressClassName: "override-ingress",
-						IngressAnnotations: map[string]string{
-							"nginx.ingress.kubernetes.io/ssl-redirect":      "true",
-							"nginx.ingress.kubernetes.io/custom-annotation": "new",
-						},
-					},
+					ScalityUI:          "test-ui-inherit-networks",
+					ScalityUIComponent: "test-component-inherit",
+					AppHistoryBasePath: "/inherit-app",
 				},
 			}
-			Expect(k8sClient.Create(ctx, exposerOverride)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, exposerOverride) }()
+			Expect(k8sClient.Create(ctx, exposerInherit)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposerInherit) }()
 
 			controllerReconciler := &ScalityUIComponentExposerReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
 
-			By("Reconciling the exposer with override configuration")
+			By("Reconciling the exposer with inherited configuration")
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
-					Name:      "test-exposer-override",
+					Name:      "test-exposer-inherit",
 					Namespace: testNamespace,
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying Ingress was created with overridden configuration")
+			By("Verifying Ingress was created with inherited configuration")
 			ingress := &networkingv1.Ingress{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-exposer-override",
+					Name:      "test-exposer-inherit",
 					Namespace: testNamespace,
 				}, ingress)
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
-			By("Verifying networks configuration override")
-			Expect(*ingress.Spec.IngressClassName).To(Equal("override-ingress"))
-			Expect(ingress.Spec.Rules[0].Host).To(Equal("override.example.com"))
+			By("Verifying complete networks configuration inheritance from ScalityUI")
+			Expect(*ingress.Spec.IngressClassName).To(Equal("inherit-ingress"))
+			Expect(ingress.Spec.Rules[0].Host).To(Equal("inherit.example.com"))
+			Expect(ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0].Path).To(Equal("/inherit-app/"))
 
-			// Verify annotation merging (exposer overrides ScalityUI)
 			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"]).To(Equal("true"))
-			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/rate-limit"]).To(Equal("100"))
-			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/custom-annotation"]).To(Equal("new"))
+			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/rate-limit"]).To(Equal("200"))
+			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/configuration-snippet"))
 		})
 
 		It("should use component name as fallback path when PublicPath is empty", func() {
