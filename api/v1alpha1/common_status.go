@@ -41,4 +41,5 @@ const (
 	ReasonReconcileError     = "ReconcileError"
 	ReasonConfigurationError = "ConfigurationError"
 	ReasonResourceError      = "ResourceError"
+	ReasonMissingResources   = "MissingResources"
 )
