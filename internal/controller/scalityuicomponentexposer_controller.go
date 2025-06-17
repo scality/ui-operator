@@ -224,7 +224,7 @@ func (r *ScalityUIComponentExposerReconciler) Reconcile(ctx context.Context, req
 	r.setStatusCondition(exposer, conditionTypeDeploymentReady, metav1.ConditionTrue,
 		reasonReconcileSucceeded, "Deployment successfully updated with ConfigMap mount")
 
-	// Reconcile Ingress (inherits from ScalityUI Networks, can be overridden by exposer config)
+	// Reconcile Ingress (inherits from ScalityUI Networks)
 	if err := r.reconcileIngress(ctx, exposer, component, ui, logger); err != nil {
 		logger.Error(err, "Failed to reconcile Ingress")
 		r.setStatusCondition(exposer, "IngressReady", metav1.ConditionFalse,
