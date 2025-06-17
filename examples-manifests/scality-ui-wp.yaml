@@ -1,0 +1,25 @@
+---
+apiVersion: ui.scality.com/v1alpha1
+kind: ScalityUI
+metadata:
+  name: scality-ui-wp
+spec:
+  image: ghcr.io/scality/metalk8s/shell-ui:v130.0.0-dev-130.0.0-beta.2-4-gf49b65a18
+  productName: RING
+  navbar:
+    main:
+      - internal:
+          groups: []
+          kind: dummy-ui
+          view: dummy-ui
+  auth:
+    kind: "OIDC"
+    providerUrl: "https://13.48.197.10:8443/auth/realms/artesca"
+    redirectUrl: "/"
+    clientId: "control-plane-ui"
+    responseType: "code"
+    scopes: "openid email profile"
+    providerLogout: true
+  networks:
+    ingressClassName: "nginx-workload-plane"
+    host: "scality-ui.scality.com"

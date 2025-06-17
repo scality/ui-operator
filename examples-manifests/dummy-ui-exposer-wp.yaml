@@ -1,0 +1,20 @@
+apiVersion: ui.scality.com/v1alpha1
+kind: ScalityUIComponentExposer
+metadata:
+  name: dummy-ui-exposer-wp
+  namespace: ui
+spec:
+  scalityUI: "scality-ui-wp"
+  scalityUIComponent: "dummy-ui"
+  appHistoryBasePath: "/"
+  auth:
+    kind: "OIDC"
+    providerUrl: "https://13.48.197.10:8443/auth/realms/artesca"
+    redirectUrl: "/"
+    clientId: "control-plane-ui"
+    responseType: "code"
+    scopes: "openid email profile"
+    providerLogout: true
+  selfConfiguration:
+    url: "https://example.com"
+    testArray: ["test1", "test2"]
