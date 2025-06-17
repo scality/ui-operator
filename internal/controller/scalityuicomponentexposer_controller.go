@@ -938,10 +938,6 @@ func (r *ScalityUIComponentExposerReconciler) buildIngress(
 		ingress.Annotations[k] = v
 	}
 
-	// Configure ingress spec
-	// Use Exact path type for precise matching of .well-known paths
-	defaultPathType := networkingv1.PathTypeExact
-
 	// Add rewrite annotation for exposer runtime configuration path
 	if ingress.Annotations == nil {
 		ingress.Annotations = make(map[string]string)
@@ -960,9 +956,6 @@ if ($request_uri ~ "^%s/\.well-known/runtime-app-configuration") {
 `, path, exposer.Name)
 	ingress.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"] = configSnippet
 
-	// Remove rewrite-target annotation since we're using configuration-snippet
-	delete(ingress.Annotations, "nginx.ingress.kubernetes.io/rewrite-target")
-
 	// Create paths for both runtime configuration and general micro-app resources
 	prefixPathType := networkingv1.PathTypePrefix
 
@@ -970,20 +963,6 @@ if ($request_uri ~ "^%s/\.well-known/runtime-app-configuration") {
 		IngressRuleValue: networkingv1.IngressRuleValue{
 			HTTP: &networkingv1.HTTPIngressRuleValue{
 				Paths: []networkingv1.HTTPIngressPath{
-					// Specific path for runtime configuration with rewrite
-					{
-						Path:     path + "/.well-known/runtime-app-configuration",
-						PathType: &defaultPathType,
-						Backend: networkingv1.IngressBackend{
-							Service: &networkingv1.IngressServiceBackend{
-								Name: component.Name, // Service name matches component name
-								Port: networkingv1.ServiceBackendPort{
-									Number: 80,
-								},
-							},
-						},
-					},
-					// General path for all other micro-app resources
 					{
 						Path:     path + "/",
 						PathType: &prefixPathType,
