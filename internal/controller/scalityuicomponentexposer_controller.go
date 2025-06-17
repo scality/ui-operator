@@ -73,6 +73,15 @@ const (
 	// Finalizers
 	exposerFinalizer         = "uicomponentexposer.scality.com/finalizer"
 	configMapFinalizerPrefix = "uicomponentexposer.scality.com/"
+
+	// Mount path constants
+	configsSubdirectory = "configs"
+
+	// Standard nginx web root path
+	defaultNginxWebRoot = "/usr/share/nginx/html"
+
+	// Configuration access path
+	defaultConfigPath = "runtime-app-configuration"
 )
 
 // ScalityUIComponentExposerReconciler reconciles a ScalityUIComponentExposer object
@@ -644,8 +653,8 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(
 		configChanged = r.ensureConfigMapVolume(deployment, volumeName, configMapName) || configChanged
 
 		// Update or add the ConfigMap volume mount for each container
-		// Mount to configs subdirectory to avoid overwriting the original micro-app-configuration file
-		configsMountPath := component.Spec.MountPath + "/configs"
+		// Mount to configsSubdirectory to avoid overwriting the original micro-app-configuration file
+		configsMountPath := component.Spec.MountPath + "/" + configsSubdirectory
 		for i := range deployment.Spec.Template.Spec.Containers {
 			configChanged = r.ensureConfigMapVolumeMount(&deployment.Spec.Template.Spec.Containers[i], volumeName, configsMountPath) || configChanged
 		}
@@ -948,12 +957,18 @@ func (r *ScalityUIComponentExposerReconciler) buildIngress(
 	// For Host access (workloadplane): handle differently based on the access pattern
 
 	// Use configuration-snippet for conditional rewriting
-	// Only rewrite the specific runtime-app-configuration path, leave other paths as-is
+	// Dynamically derive HTTP access path from component's mountPath
+	if !strings.HasPrefix(component.Spec.MountPath, defaultNginxWebRoot) {
+		return fmt.Errorf("mountPath must start with nginx web root %q, got: %s", defaultNginxWebRoot, component.Spec.MountPath)
+	}
+
+	httpPath := strings.TrimPrefix(component.Spec.MountPath, defaultNginxWebRoot)
+
 	configSnippet := fmt.Sprintf(`
-if ($request_uri ~ "^%s/\.well-known/runtime-app-configuration") {
-    rewrite ^.*$ /.well-known/configs/%s break;
+if ($request_uri ~ "^%s%s/%s") {
+    rewrite ^.*$ %s/%s/%s break;
 }
-`, path, exposer.Name)
+`, path, httpPath, defaultConfigPath, httpPath, configsSubdirectory, exposer.Name)
 	ingress.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"] = configSnippet
 
 	// Create paths for both runtime configuration and general micro-app resources
