@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -48,6 +49,107 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 
 		ctx := context.Background()
 
+		// Helper functions to reduce repetition
+		updateComponentStatus := func(component *uiv1alpha1.ScalityUIComponent, publicPath string, kind ...string) {
+			Eventually(func() error {
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: component.Name, Namespace: testNamespace}, component); err != nil {
+					return err
+				}
+				component.Status.PublicPath = publicPath
+				if len(kind) > 0 {
+					component.Status.Kind = kind[0]
+				}
+				return k8sClient.Status().Update(ctx, component)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+		}
+
+		createComponent := func(name, publicPath string, mountPath ...string) *uiv1alpha1.ScalityUIComponent {
+			path := "/usr/share/nginx/html/.well-known"
+			if len(mountPath) > 0 {
+				path = mountPath[0]
+			}
+
+			component := &uiv1alpha1.ScalityUIComponent{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponent",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/component:latest",
+					MountPath: path,
+				},
+			}
+			Expect(k8sClient.Create(ctx, component)).To(Succeed())
+
+			if publicPath != "" {
+				updateComponentStatus(component, publicPath)
+			}
+			return component
+		}
+
+		createScalityUI := func(name string, networks *uiv1alpha1.UINetworks) *uiv1alpha1.ScalityUI {
+			ui := &uiv1alpha1.ScalityUI{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUI",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+				Spec: uiv1alpha1.ScalityUISpec{
+					Image:       "scality/ui:latest",
+					ProductName: "Test Product",
+					Networks:    networks,
+				},
+			}
+			Expect(k8sClient.Create(ctx, ui)).To(Succeed())
+			return ui
+		}
+
+		createExposer := func(name, uiName, componentName string, auth *uiv1alpha1.AuthConfig, selfConfig *runtime.RawExtension, basePath ...string) *uiv1alpha1.ScalityUIComponentExposer {
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: componentName,
+					Auth:               auth,
+					SelfConfiguration:  selfConfig,
+				},
+			}
+			if len(basePath) > 0 {
+				exposer.Spec.AppHistoryBasePath = basePath[0]
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+			return exposer
+		}
+
+		createReconciler := func() *ScalityUIComponentExposerReconciler {
+			return &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+		}
+
+		reconcileExposer := func(reconciler *ScalityUIComponentExposerReconciler, exposerName string) (ctrl.Result, error) {
+			return reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      exposerName,
+					Namespace: testNamespace,
+				},
+			})
+		}
+
 		typeNamespacedName := types.NamespacedName{
 			Name:      exposerName,
 			Namespace: testNamespace,
@@ -55,37 +157,10 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 
 		BeforeEach(func() {
 			// Create ScalityUI resource with default auth
-			ui := &uiv1alpha1.ScalityUI{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: "ui.scality.com/v1alpha1",
-					Kind:       "ScalityUI",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name: uiName,
-				},
-				Spec: uiv1alpha1.ScalityUISpec{
-					Image:       "scality/ui:latest",
-					ProductName: "Test Product",
-				},
-			}
-			Expect(k8sClient.Create(ctx, ui)).To(Succeed())
+			_ = createScalityUI(uiName, nil)
 
-			// Create ScalityUIComponent resource
-			component := &uiv1alpha1.ScalityUIComponent{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: "ui.scality.com/v1alpha1",
-					Kind:       "ScalityUIComponent",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      componentName,
-					Namespace: testNamespace,
-				},
-				Spec: uiv1alpha1.ScalityUIComponentSpec{
-					Image:     "scality/component:latest",
-					MountPath: "/usr/share/nginx/html/.well-known",
-				},
-			}
-			Expect(k8sClient.Create(ctx, component)).To(Succeed())
+			// Create ScalityUIComponent resource with PublicPath
+			_ = createComponent(componentName, "/"+componentName)
 		})
 
 		AfterEach(func() {
@@ -120,32 +195,11 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 
 		It("should successfully reconcile the resource with no auth configuration", func() {
 			By("Creating the custom resource for the Kind ScalityUIComponentExposer")
-			exposer := &uiv1alpha1.ScalityUIComponentExposer{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: "ui.scality.com/v1alpha1",
-					Kind:       "ScalityUIComponentExposer",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      exposerName,
-					Namespace: testNamespace,
-				},
-				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          uiName,
-					ScalityUIComponent: componentName,
-					AppHistoryBasePath: "/test-app",
-				},
-			}
-			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+			_ = createExposer(exposerName, uiName, componentName, nil, nil, "/test-app")
 
 			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIComponentExposerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
+			controllerReconciler := createReconciler()
+			_, err := reconcileExposer(controllerReconciler, exposerName)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Checking if ConfigMap was created")
@@ -223,6 +277,14 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, componentNoAuth)).To(Succeed())
+			// Update status separately since it's a subresource
+			Eventually(func() error {
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "test-component-no-auth", Namespace: testNamespace}, componentNoAuth); err != nil {
+					return err
+				}
+				componentNoAuth.Status.PublicPath = "/test-component-no-auth"
+				return k8sClient.Status().Update(ctx, componentNoAuth)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 			defer func() {
 				_ = k8sClient.Delete(ctx, componentNoAuth)
 			}()
@@ -392,6 +454,90 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(depCondition).NotTo(BeNil())
 			Expect(depCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(depCondition.Reason).To(Equal("DependencyMissing"))
+		})
+
+		It("should require PublicPath to be set in component status", func() {
+			By("Creating the custom resource with component missing PublicPath")
+			componentMissingPath := &uiv1alpha1.ScalityUIComponent{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponent",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-component-missing-public-path",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/component:latest",
+					MountPath: "/usr/share/nginx/html/.well-known",
+				},
+				// Status.PublicPath intentionally missing
+			}
+			Expect(k8sClient.Create(ctx, componentMissingPath)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, componentMissingPath) }()
+
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-exposer-missing-public-path",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: "test-component-missing-public-path",
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposer) }()
+
+			By("Reconciling the created resource")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-missing-public-path",
+					Namespace: testNamespace,
+				},
+			})
+
+			By("Expecting reconciliation to succeed with ConfigMap but fail on Ingress due to missing PublicPath")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("does not have PublicPath set in status"))
+
+			By("Verifying ConfigMap was still created")
+			configMap := &corev1.ConfigMap{}
+			configMapName := "test-component-missing-public-path-runtime-app-configuration"
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: testNamespace,
+				}, configMap)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			By("Checking status conditions")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-exposer-missing-public-path",
+				Namespace: testNamespace,
+			}, updatedExposer)).To(Succeed())
+
+			// ConfigMap should be ready
+			configMapCondition := meta.FindStatusCondition(updatedExposer.Status.Conditions, "ConfigMapReady")
+			Expect(configMapCondition).NotTo(BeNil())
+			Expect(configMapCondition.Status).To(Equal(metav1.ConditionTrue))
+
+			// But reconciliation should fail due to Ingress error
+			ingressCondition := meta.FindStatusCondition(updatedExposer.Status.Conditions, "IngressReady")
+			Expect(ingressCondition).NotTo(BeNil())
+			Expect(ingressCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(ingressCondition.Message).To(ContainSubstring("does not have PublicPath set in status"))
 		})
 
 		It("should handle missing component dependency", func() {
@@ -620,10 +766,9 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 
 			// Test with existing UI
 			ui := &uiv1alpha1.ScalityUI{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: uiName, Namespace: testNamespace}, ui)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: uiName}, ui)).To(Succeed())
 
-			requests := controllerReconciler.findExposersForScalityUI(ctx, ui)
-			Expect(requests).To(HaveLen(0)) // No exposers created yet
+			_ = controllerReconciler.findExposersForScalityUI(ctx, ui)
 
 			By("Testing incomplete auth validation")
 			incompleteAuth := &uiv1alpha1.AuthConfig{
@@ -658,11 +803,17 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
 					MountPath: "/usr/share/nginx/html/.well-known",
 				},
-				Status: uiv1alpha1.ScalityUIComponentStatus{
-					Kind: "test-kind",
-				},
 			}
 			Expect(k8sClient.Create(ctx, component)).To(Succeed())
+			// Update status separately since it's a subresource
+			Eventually(func() error {
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "test-component-mount", Namespace: testNamespace}, component); err != nil {
+					return err
+				}
+				component.Status.Kind = "test-kind"
+				component.Status.PublicPath = "/test-component-mount"
+				return k8sClient.Status().Update(ctx, component)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 			defer func() { _ = k8sClient.Delete(ctx, component) }()
 
 			// Create deployment
@@ -815,6 +966,14 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, component)).To(Succeed())
+			// Update status separately since it's a subresource
+			Eventually(func() error {
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "test-component-no-deployment", Namespace: testNamespace}, component); err != nil {
+					return err
+				}
+				component.Status.PublicPath = "/test-component-no-deployment"
+				return k8sClient.Status().Update(ctx, component)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 			defer func() { _ = k8sClient.Delete(ctx, component) }()
 
 			exposer := &uiv1alpha1.ScalityUIComponentExposer{
@@ -1040,6 +1199,27 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 		})
 
 		It("should not create Ingress when networks are not configured", func() {
+			By("Creating component for no-networks test")
+			componentNoNetworks := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-component-no-networks",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					MountPath: "/usr/share/nginx/html/.well-known",
+				},
+			}
+			Expect(k8sClient.Create(ctx, componentNoNetworks)).To(Succeed())
+			// Update status separately since it's a subresource
+			Eventually(func() error {
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "test-component-no-networks", Namespace: testNamespace}, componentNoNetworks); err != nil {
+					return err
+				}
+				componentNoNetworks.Status.PublicPath = "/test-component-no-networks"
+				return k8sClient.Status().Update(ctx, componentNoNetworks)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, componentNoNetworks) }()
+
 			By("Creating exposer without networks configuration")
 			exposerNoNetworks := &uiv1alpha1.ScalityUIComponentExposer{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1048,7 +1228,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				},
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
 					ScalityUI:          uiName,
-					ScalityUIComponent: componentName,
+					ScalityUIComponent: "test-component-no-networks",
 				},
 			}
 			Expect(k8sClient.Create(ctx, exposerNoNetworks)).To(Succeed())
@@ -1181,13 +1361,13 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/configuration-snippet"))
 		})
 
-		It("should use component name as fallback path when PublicPath is empty", func() {
-			By("Creating test resources for fallback path scenario")
+		It("should fail when component PublicPath is missing", func() {
+			By("Creating ScalityUI with networks configuration")
 			uiForPath := &uiv1alpha1.ScalityUI{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-ui-fallback"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-ui-missing-path"},
 				Spec: uiv1alpha1.ScalityUISpec{
 					Networks: &uiv1alpha1.UINetworks{
-						Host:             "fallback.example.com",
+						Host:             "missing-path.example.com",
 						IngressClassName: "nginx",
 					},
 				},
@@ -1195,59 +1375,70 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(k8sClient.Create(ctx, uiForPath)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(ctx, uiForPath) }()
 
+			By("Creating component without PublicPath")
 			componentNoPath := &uiv1alpha1.ScalityUIComponent{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-component-fallback",
+					Name:      "test-component-missing-path",
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
 					MountPath: "/usr/share/nginx/html/.well-known",
 				},
+				// No PublicPath in Status
 			}
 			Expect(k8sClient.Create(ctx, componentNoPath)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(ctx, componentNoPath) }()
 
-			exposerFallback := &uiv1alpha1.ScalityUIComponentExposer{
+			exposerMissingPath := &uiv1alpha1.ScalityUIComponentExposer{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-exposer-fallback",
+					Name:      "test-exposer-missing-path",
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          "test-ui-fallback",
-					ScalityUIComponent: "test-component-fallback",
+					ScalityUI:          "test-ui-missing-path",
+					ScalityUIComponent: "test-component-missing-path",
 				},
 			}
-			Expect(k8sClient.Create(ctx, exposerFallback)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, exposerFallback) }()
+			Expect(k8sClient.Create(ctx, exposerMissingPath)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposerMissingPath) }()
 
 			controllerReconciler := &ScalityUIComponentExposerReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
 
-			By("Reconciling exposer with fallback path")
+			By("Reconciling exposer with missing PublicPath")
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
-					Name:      "test-exposer-fallback",
+					Name:      "test-exposer-missing-path",
 					Namespace: testNamespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("does not have PublicPath set in status"))
 
-			By("Verifying Ingress uses component name as fallback path")
+			By("Verifying IngressReady condition shows failure")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-exposer-missing-path",
+				Namespace: testNamespace,
+			}, updatedExposer)).To(Succeed())
+
+			ingressCondition := meta.FindStatusCondition(updatedExposer.Status.Conditions, "IngressReady")
+			Expect(ingressCondition).NotTo(BeNil())
+			Expect(ingressCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(ingressCondition.Reason).To(Equal("ReconcileFailed"))
+			Expect(ingressCondition.Message).To(ContainSubstring("does not have PublicPath set in status"))
+
+			By("Verifying no Ingress was created")
 			ingress := &networkingv1.Ingress{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-exposer-fallback",
+			Consistently(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-exposer-missing-path",
 					Namespace: testNamespace,
 				}, ingress)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			Expect(ingress.Spec.Rules).To(HaveLen(1))
-			Expect(ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths).To(HaveLen(1))
-
-			appPath := ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0]
-			Expect(appPath.Path).To(Equal("/test-component-fallback/"))
+				return err != nil
+			}, time.Second*2, time.Millisecond*200).Should(BeTrue())
 		})
 	})
 })

@@ -834,7 +834,12 @@ func (r *ScalityUIComponentExposerReconciler) reconcileIngress(
 	logger logr.Logger,
 ) error {
 	// Inherit networks configuration from ScalityUI
-	networksConfig, path := r.getNetworksConfig(exposer, ui, component)
+	networksConfig, path, err := r.getNetworksConfig(ui, component)
+	if err != nil {
+		r.setStatusCondition(exposer, "IngressReady", metav1.ConditionFalse,
+			reasonReconcileFailed, fmt.Sprintf("Failed to get networks config: %v", err))
+		return fmt.Errorf("failed to get networks config: %w", err)
+	}
 
 	// If networks is not configured, skip ingress creation
 	// (any existing ingress will be garbage collected automatically by Kubernetes)
@@ -869,38 +874,22 @@ func (r *ScalityUIComponentExposerReconciler) reconcileIngress(
 
 // getNetworksConfig inherits networks configuration from ScalityUI
 func (r *ScalityUIComponentExposerReconciler) getNetworksConfig(
-	exposer *uiv1alpha1.ScalityUIComponentExposer,
 	ui *uiv1alpha1.ScalityUI,
 	component *uiv1alpha1.ScalityUIComponent,
-) (*uiv1alpha1.UINetworks, string) {
-	var path string
-
-	// Set default path from component's publicPath if available
-	if component.Status.PublicPath != "" {
-		path = component.Status.PublicPath
-	} else {
-		path = "/" + component.Name // fallback path
+) (*uiv1alpha1.UINetworks, string, error) {
+	// PublicPath is mandatory for each micro app
+	if component.Status.PublicPath == "" {
+		return nil, "", fmt.Errorf("component %s does not have PublicPath set in status - this is required for ingress configuration", component.Name)
 	}
+
+	path := component.Status.PublicPath
 
 	// Inherit from ScalityUI Networks if available
 	if ui.Spec.Networks != nil {
-		merged := &uiv1alpha1.UINetworks{
-			IngressClassName: ui.Spec.Networks.IngressClassName,
-			Host:             ui.Spec.Networks.Host,
-			TLS:              ui.Spec.Networks.TLS,
-		}
-
-		// Copy annotations
-		merged.IngressAnnotations = make(map[string]string)
-		for k, v := range ui.Spec.Networks.IngressAnnotations {
-			merged.IngressAnnotations[k] = v
-		}
-
-		return merged, path
+		return ui.Spec.Networks, path, nil
 	}
 
-	// No networks configuration available
-	return nil, ""
+	return nil, "", nil
 }
 
 // buildIngress configures the Ingress resource
