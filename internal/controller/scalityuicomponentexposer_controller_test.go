@@ -1008,16 +1008,9 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			rule := ingress.Spec.Rules[0]
 			Expect(rule.Host).To(Equal("ui.example.com"))
 
-			Expect(rule.IngressRuleValue.HTTP.Paths).To(HaveLen(2))
+			Expect(rule.IngressRuleValue.HTTP.Paths).To(HaveLen(1))
 
-			// First path should be exact match for runtime configuration
-			configPath := rule.IngressRuleValue.HTTP.Paths[0]
-			Expect(configPath.Path).To(Equal("/my-app/.well-known/runtime-app-configuration"))
-			Expect(*configPath.PathType).To(Equal(networkingv1.PathTypeExact))
-			Expect(configPath.Backend.Service.Name).To(Equal("test-component-with-path"))
-
-			// Second path should be prefix match for general app resources
-			appPath := rule.IngressRuleValue.HTTP.Paths[1]
+			appPath := rule.IngressRuleValue.HTTP.Paths[0]
 			Expect(appPath.Path).To(Equal("/my-app/"))
 			Expect(*appPath.PathType).To(Equal(networkingv1.PathTypePrefix))
 
@@ -1257,12 +1250,9 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
 			Expect(ingress.Spec.Rules).To(HaveLen(1))
-			Expect(ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths).To(HaveLen(2))
+			Expect(ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths).To(HaveLen(1))
 
-			configPath := ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0]
-			Expect(configPath.Path).To(Equal("/test-component-fallback/.well-known/runtime-app-configuration"))
-
-			appPath := ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[1]
+			appPath := ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0]
 			Expect(appPath.Path).To(Equal("/test-component-fallback/"))
 		})
 	})
