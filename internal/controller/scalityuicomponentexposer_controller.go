@@ -76,12 +76,6 @@ const (
 
 	// Mount path constants
 	configsSubdirectory = "configs"
-
-	// Standard nginx web root path
-	defaultNginxWebRoot = "/usr/share/nginx/html"
-
-	// Configuration access path
-	defaultConfigPath = "runtime-app-configuration"
 )
 
 // ScalityUIComponentExposerReconciler reconciles a ScalityUIComponentExposer object
@@ -923,18 +917,11 @@ func (r *ScalityUIComponentExposerReconciler) buildIngress(
 	// For Host access (workloadplane): handle differently based on the access pattern
 
 	// Use configuration-snippet for conditional rewriting
-	// Dynamically derive HTTP access path from component's mountPath
-	if !strings.HasPrefix(component.Spec.MountPath, defaultNginxWebRoot) {
-		return fmt.Errorf("mountPath must start with nginx web root %q, got: %s", defaultNginxWebRoot, component.Spec.MountPath)
-	}
-
-	httpPath := strings.TrimPrefix(component.Spec.MountPath, defaultNginxWebRoot)
-
 	configSnippet := fmt.Sprintf(`
-if ($request_uri ~ "^%s%s/%s") {
-    rewrite ^.*$ %s/%s/%s break;
+if ($request_uri ~ "^%s/\\.well-known/runtime-app-configuration(\\?.*)?$") {
+    rewrite ^.*$ /.well-known/%s/%s break;
 }
-`, path, httpPath, defaultConfigPath, httpPath, configsSubdirectory, exposer.Name)
+`, path, configsSubdirectory, exposer.Name)
 	ingress.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"] = configSnippet
 
 	// Create paths for both runtime configuration and general micro-app resources

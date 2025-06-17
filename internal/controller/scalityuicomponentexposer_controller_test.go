@@ -1183,7 +1183,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/ssl-redirect"))
 			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/configuration-snippet"))
 			configSnippet := ingress.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
-			Expect(configSnippet).To(ContainSubstring("/my-app/.well-known/runtime-app-configuration"))
+			Expect(configSnippet).To(ContainSubstring("/my-app/\\\\.well-known/runtime-app-configuration"))
 			Expect(configSnippet).To(ContainSubstring("/.well-known/configs/test-exposer-with-ingress"))
 
 			By("Checking IngressReady status condition")
