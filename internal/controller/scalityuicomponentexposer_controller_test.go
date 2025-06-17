@@ -733,7 +733,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(HaveLen(1))
 			mount := updatedDeployment.Spec.Template.Spec.Containers[0].VolumeMounts[0]
 			Expect(mount.Name).To(Equal("config-volume-test-component-mount"))
-			Expect(mount.MountPath).To(Equal("/usr/share/nginx/html/.well-known/configs"))
+			Expect(mount.MountPath).To(Equal("/usr/share/nginx/html/.well-known/" + configsSubdirectory))
 			Expect(mount.SubPath).To(Equal(""))
 			Expect(mount.ReadOnly).To(BeTrue())
 
@@ -781,25 +781,26 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			}
 
 			// First call should add mount
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/configs")
+			testMountPath := "/usr/share/nginx/html/.well-known/" + configsSubdirectory
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", testMountPath)
 			Expect(changed).To(BeTrue())
 			Expect(container.VolumeMounts).To(HaveLen(1))
 			Expect(container.VolumeMounts[0].Name).To(Equal("test-volume"))
-			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known/configs"))
+			Expect(container.VolumeMounts[0].MountPath).To(Equal(testMountPath))
 			Expect(container.VolumeMounts[0].SubPath).To(Equal(""))
 			Expect(container.VolumeMounts[0].ReadOnly).To(BeTrue())
 
 			// Second call with same params should not change
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/configs")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", testMountPath)
 			Expect(changed).To(BeFalse())
 
 			// Modify mount and verify it gets corrected
 			container.VolumeMounts[0].ReadOnly = false
 			container.VolumeMounts[0].MountPath = "/wrong/path"
-			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", "/usr/share/nginx/html/.well-known/configs")
+			changed = controllerReconciler.ensureConfigMapVolumeMount(container, "test-volume", testMountPath)
 			Expect(changed).To(BeTrue())
 			Expect(container.VolumeMounts[0].ReadOnly).To(BeTrue())
-			Expect(container.VolumeMounts[0].MountPath).To(Equal("/usr/share/nginx/html/.well-known/configs"))
+			Expect(container.VolumeMounts[0].MountPath).To(Equal(testMountPath))
 		})
 
 		It("should handle deployment not found gracefully", func() {
@@ -1023,8 +1024,8 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/ssl-redirect"))
 			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/configuration-snippet"))
 			configSnippet := ingress.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
-			Expect(configSnippet).To(ContainSubstring("/my-app/\\.well-known/runtime-app-configuration"))
-			Expect(configSnippet).To(ContainSubstring("test-exposer-with-ingress"))
+			Expect(configSnippet).To(ContainSubstring("/my-app/.well-known/runtime-app-configuration"))
+			Expect(configSnippet).To(ContainSubstring("/.well-known/configs/test-exposer-with-ingress"))
 
 			By("Checking IngressReady status condition")
 			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
