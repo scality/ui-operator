@@ -110,7 +110,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			return ui
 		}
 
-		createExposer := func(name, uiName, componentName string, auth *uiv1alpha1.AuthConfig, selfConfig *runtime.RawExtension, basePath ...string) *uiv1alpha1.ScalityUIComponentExposer {
+		createExposer := func(name, uiName, componentName string, selfConfig *runtime.RawExtension, basePath ...string) *uiv1alpha1.ScalityUIComponentExposer {
 			exposer := &uiv1alpha1.ScalityUIComponentExposer{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "ui.scality.com/v1alpha1",
@@ -123,7 +123,6 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
 					ScalityUI:          uiName,
 					ScalityUIComponent: componentName,
-					Auth:               auth,
 					SelfConfiguration:  selfConfig,
 				},
 			}
@@ -195,7 +194,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 
 		It("should successfully reconcile the resource with no auth configuration", func() {
 			By("Creating the custom resource for the Kind ScalityUIComponentExposer")
-			_ = createExposer(exposerName, uiName, componentName, nil, nil, "/test-app")
+			_ = createExposer(exposerName, uiName, componentName, nil, "/test-app")
 
 			By("Reconciling the created resource")
 			controllerReconciler := createReconciler()
@@ -240,112 +239,37 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(configMapCondition.Reason).To(Equal("ReconcileSucceeded"))
 		})
 
-		It("should handle no auth when ScalityUI has no auth", func() {
-			By("Creating a ScalityUI without auth configuration")
-			uiNoAuth := &uiv1alpha1.ScalityUI{
+		It("should handle complete auth configuration from ScalityUI", func() {
+			By("Creating ScalityUI with complete auth configuration")
+			providerLogout := true
+			uiWithAuth := &uiv1alpha1.ScalityUI{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "ui.scality.com/v1alpha1",
 					Kind:       "ScalityUI",
 				},
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-ui-no-auth",
+					Name: "test-ui-with-auth",
 				},
 				Spec: uiv1alpha1.ScalityUISpec{
 					Image:       "scality/ui:latest",
 					ProductName: "Test Product",
-					// No Auth field
+					Auth: &uiv1alpha1.AuthConfig{
+						Kind:           "OIDC",
+						ProviderURL:    "https://auth.example.com",
+						RedirectURL:    "/callback",
+						ClientID:       "test-client",
+						ResponseType:   "code",
+						Scopes:         "openid profile email",
+						ProviderLogout: &providerLogout,
+					},
 				},
 			}
-			Expect(k8sClient.Create(ctx, uiNoAuth)).To(Succeed())
+			Expect(k8sClient.Create(ctx, uiWithAuth)).To(Succeed())
 			defer func() {
-				_ = k8sClient.Delete(ctx, uiNoAuth)
+				_ = k8sClient.Delete(ctx, uiWithAuth)
 			}()
 
-			By("Creating a separate component for this test")
-			componentNoAuth := &uiv1alpha1.ScalityUIComponent{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: "ui.scality.com/v1alpha1",
-					Kind:       "ScalityUIComponent",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-component-no-auth",
-					Namespace: testNamespace,
-				},
-				Spec: uiv1alpha1.ScalityUIComponentSpec{
-					Image:     "scality/component:latest",
-					MountPath: "/usr/share/nginx/html/.well-known",
-				},
-			}
-			Expect(k8sClient.Create(ctx, componentNoAuth)).To(Succeed())
-			// Update status separately since it's a subresource
-			Eventually(func() error {
-				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "test-component-no-auth", Namespace: testNamespace}, componentNoAuth); err != nil {
-					return err
-				}
-				componentNoAuth.Status.PublicPath = "/test-component-no-auth"
-				return k8sClient.Status().Update(ctx, componentNoAuth)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-			defer func() {
-				_ = k8sClient.Delete(ctx, componentNoAuth)
-			}()
-
-			By("Creating the custom resource referencing UI without auth")
-			exposer := &uiv1alpha1.ScalityUIComponentExposer{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: "ui.scality.com/v1alpha1",
-					Kind:       "ScalityUIComponentExposer",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-exposer-no-auth",
-					Namespace: testNamespace,
-				},
-				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          "test-ui-no-auth",
-					ScalityUIComponent: "test-component-no-auth",
-					AppHistoryBasePath: "/test-app",
-				},
-			}
-			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
-			defer func() {
-				_ = k8sClient.Delete(ctx, exposer)
-			}()
-
-			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIComponentExposerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      "test-exposer-no-auth",
-					Namespace: testNamespace,
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying empty auth configuration")
-			configMap := &corev1.ConfigMap{}
-			configMapName := "test-component-no-auth-runtime-app-configuration"
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      configMapName,
-					Namespace: testNamespace,
-				}, configMap)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-
-			var runtimeConfig MicroAppRuntimeConfiguration
-			err = json.Unmarshal([]byte(configMap.Data["test-exposer-no-auth"]), &runtimeConfig)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify empty auth configuration when neither exposer nor ScalityUI has auth
-			authConfig := runtimeConfig.Spec.Auth
-			Expect(authConfig).To(BeEmpty())
-		})
-
-		It("should handle complete custom auth configuration", func() {
-			By("Creating the custom resource with complete auth configuration")
-			providerLogout := true
+			By("Creating the custom resource referencing UI with auth")
 			exposer := &uiv1alpha1.ScalityUIComponentExposer{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "ui.scality.com/v1alpha1",
@@ -356,18 +280,9 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          uiName,
+					ScalityUI:          "test-ui-with-auth",
 					ScalityUIComponent: componentName,
 					AppHistoryBasePath: "/test-app",
-					Auth: &uiv1alpha1.AuthConfig{
-						Kind:           "OIDC",
-						ProviderURL:    "https://auth.example.com",
-						RedirectURL:    "/callback",
-						ClientID:       "test-client",
-						ResponseType:   "code",
-						Scopes:         "openid profile email",
-						ProviderLogout: &providerLogout,
-					},
 					SelfConfiguration: &runtime.RawExtension{
 						Raw: []byte(`{"url": "/test"}`),
 					},
@@ -415,8 +330,8 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(selfConfig["url"]).To(Equal("/test"))
 		})
 
-		It("should handle missing dependencies", func() {
-			By("Creating the custom resource with non-existent dependencies")
+		It("should handle missing ScalityUI dependency", func() {
+			By("Creating the custom resource with non-existent ScalityUI")
 			exposer := &uiv1alpha1.ScalityUIComponentExposer{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "ui.scality.com/v1alpha1",
@@ -428,7 +343,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				},
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
 					ScalityUI:          "non-existent-ui",
-					ScalityUIComponent: componentName,
+					ScalityUIComponent: componentName, // Use existing component
 					AppHistoryBasePath: "/test-app",
 				},
 			}
@@ -454,10 +369,11 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(depCondition).NotTo(BeNil())
 			Expect(depCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(depCondition.Reason).To(Equal("DependencyMissing"))
+			Expect(depCondition.Message).To(ContainSubstring("ScalityUI \"non-existent-ui\" not found"))
 		})
 
 		It("should require PublicPath to be set in component status", func() {
-			By("Creating the custom resource with component missing PublicPath")
+			By("Creating a component missing PublicPath")
 			componentMissingPath := &uiv1alpha1.ScalityUIComponent{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "ui.scality.com/v1alpha1",
@@ -476,6 +392,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(k8sClient.Create(ctx, componentMissingPath)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(ctx, componentMissingPath) }()
 
+			By("Creating exposer referencing component without PublicPath")
 			exposer := &uiv1alpha1.ScalityUIComponentExposer{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "ui.scality.com/v1alpha1",
@@ -486,7 +403,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          uiName,
+					ScalityUI:          uiName, // Use existing UI
 					ScalityUIComponent: "test-component-missing-public-path",
 					AppHistoryBasePath: "/test-app",
 				},
@@ -540,8 +457,8 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(ingressCondition.Message).To(ContainSubstring("does not have PublicPath set in status"))
 		})
 
-		It("should handle missing component dependency", func() {
-			By("Creating the custom resource with non-existent component")
+		It("should handle missing ScalityUIComponent dependency", func() {
+			By("Creating the custom resource with non-existent ScalityUIComponent")
 			exposer := &uiv1alpha1.ScalityUIComponentExposer{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "ui.scality.com/v1alpha1",
@@ -552,7 +469,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          uiName,
+					ScalityUI:          uiName, // Use existing UI
 					ScalityUIComponent: "non-existent-component",
 					AppHistoryBasePath: "/test-app",
 				},
@@ -614,8 +531,279 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		It("should handle exposer spec update with invalid ScalityUI reference", func() {
+			By("Creating a working exposer first")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-exposer-invalid-ui",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName, // Start with valid UI
+					ScalityUIComponent: componentName,
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposer) }()
+
+			By("Reconciling the working exposer successfully")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-invalid-ui",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Updating exposer to reference invalid ScalityUI")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-exposer-invalid-ui",
+				Namespace: testNamespace,
+			}, updatedExposer)).To(Succeed())
+
+			updatedExposer.Spec.ScalityUI = "non-existent-ui"
+			Expect(k8sClient.Update(ctx, updatedExposer)).To(Succeed())
+
+			By("Reconciling after invalid update")
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-invalid-ui",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			By("Verifying dependency error condition")
+			finalExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-exposer-invalid-ui",
+				Namespace: testNamespace,
+			}, finalExposer)).To(Succeed())
+
+			depCondition := meta.FindStatusCondition(finalExposer.Status.Conditions, "DependenciesReady")
+			Expect(depCondition).NotTo(BeNil())
+			Expect(depCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(depCondition.Reason).To(Equal("DependencyMissing"))
+			Expect(depCondition.Message).To(ContainSubstring("ScalityUI \"non-existent-ui\" not found"))
+		})
+
+		It("should handle exposer spec update with invalid ScalityUIComponent reference", func() {
+			By("Creating a working exposer first")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-exposer-invalid-component",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: componentName, // Start with valid component
+					AppHistoryBasePath: "/test-app",
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposer) }()
+
+			By("Reconciling the working exposer successfully")
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-invalid-component",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Updating exposer to reference invalid ScalityUIComponent")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-exposer-invalid-component",
+				Namespace: testNamespace,
+			}, updatedExposer)).To(Succeed())
+
+			updatedExposer.Spec.ScalityUIComponent = "non-existent-component"
+			Expect(k8sClient.Update(ctx, updatedExposer)).To(Succeed())
+
+			By("Reconciling after invalid update")
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-invalid-component",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			By("Verifying dependency error condition")
+			finalExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-exposer-invalid-component",
+				Namespace: testNamespace,
+			}, finalExposer)).To(Succeed())
+
+			depCondition := meta.FindStatusCondition(finalExposer.Status.Conditions, "DependenciesReady")
+			Expect(depCondition).NotTo(BeNil())
+			Expect(depCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(depCondition.Reason).To(Equal("DependencyMissing"))
+			Expect(depCondition.Message).To(ContainSubstring("ScalityUIComponent \"non-existent-component\" not found"))
+		})
+
 		It("should update ConfigMap when exposer spec changes", func() {
-			By("Creating the initial custom resource")
+			By("Creating exposer with initial configuration")
+			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUIComponentExposer",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-exposer-spec-update",
+					Namespace: testNamespace,
+				},
+				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+					ScalityUI:          uiName,
+					ScalityUIComponent: componentName,
+					AppHistoryBasePath: "/initial-app",
+					SelfConfiguration: &runtime.RawExtension{
+						Raw: []byte(`{"feature": "initial", "version": 1}`),
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, exposer) }()
+
+			controllerReconciler := &ScalityUIComponentExposerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("Reconciling initial exposer")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-spec-update",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying initial ConfigMap content")
+			configMap := &corev1.ConfigMap{}
+			configMapName := componentName + "-runtime-app-configuration"
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: testNamespace,
+				}, configMap)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			var initialConfig MicroAppRuntimeConfiguration
+			err = json.Unmarshal([]byte(configMap.Data["test-exposer-spec-update"]), &initialConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(initialConfig.Spec.AppHistoryBasePath).To(Equal("/initial-app"))
+			Expect(initialConfig.Spec.SelfConfiguration["feature"]).To(Equal("initial"))
+			Expect(initialConfig.Spec.SelfConfiguration["version"]).To(Equal(float64(1)))
+
+			By("Updating exposer spec with new configuration")
+			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-exposer-spec-update",
+				Namespace: testNamespace,
+			}, updatedExposer)).To(Succeed())
+
+			updatedExposer.Spec.AppHistoryBasePath = "/updated-app"
+			updatedExposer.Spec.SelfConfiguration = &runtime.RawExtension{
+				Raw: []byte(`{"feature": "updated", "version": 2, "newField": "added"}`),
+			}
+			Expect(k8sClient.Update(ctx, updatedExposer)).To(Succeed())
+
+			By("Reconciling updated exposer")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-exposer-spec-update",
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap was updated")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: testNamespace,
+				}, configMap)
+				if err != nil {
+					return false
+				}
+
+				var updatedConfig MicroAppRuntimeConfiguration
+				err = json.Unmarshal([]byte(configMap.Data["test-exposer-spec-update"]), &updatedConfig)
+				if err != nil {
+					return false
+				}
+
+				return updatedConfig.Spec.AppHistoryBasePath == "/updated-app" &&
+					updatedConfig.Spec.SelfConfiguration["feature"] == "updated" &&
+					updatedConfig.Spec.SelfConfiguration["version"] == float64(2) &&
+					updatedConfig.Spec.SelfConfiguration["newField"] == "added"
+			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
+
+			By("Verifying final ConfigMap content")
+			var finalConfig MicroAppRuntimeConfiguration
+			err = json.Unmarshal([]byte(configMap.Data["test-exposer-spec-update"]), &finalConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalConfig.Spec.AppHistoryBasePath).To(Equal("/updated-app"))
+			Expect(finalConfig.Spec.SelfConfiguration["feature"]).To(Equal("updated"))
+			Expect(finalConfig.Spec.SelfConfiguration["version"]).To(Equal(float64(2)))
+			Expect(finalConfig.Spec.SelfConfiguration["newField"]).To(Equal("added"))
+		})
+
+		It("should update ConfigMap when ScalityUI configuration changes", func() {
+			By("Creating ScalityUI with initial auth configuration")
+			providerLogout := true
+			uiWithAuth := &uiv1alpha1.ScalityUI{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "ui.scality.com/v1alpha1",
+					Kind:       "ScalityUI",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-ui-auth-update",
+				},
+				Spec: uiv1alpha1.ScalityUISpec{
+					Image:       "scality/ui:latest",
+					ProductName: "Test Product",
+					Auth: &uiv1alpha1.AuthConfig{
+						Kind:           "OIDC",
+						ProviderURL:    "https://initial-auth.example.com",
+						RedirectURL:    "/initial-callback",
+						ClientID:       "initial-client",
+						ResponseType:   "code",
+						Scopes:         "openid profile email",
+						ProviderLogout: &providerLogout,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, uiWithAuth)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, uiWithAuth) }()
+
+			By("Creating the exposer")
 			exposer := &uiv1alpha1.ScalityUIComponentExposer{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "ui.scality.com/v1alpha1",
@@ -626,7 +814,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          uiName,
+					ScalityUI:          "test-ui-auth-update",
 					ScalityUIComponent: componentName,
 					AppHistoryBasePath: "/test-app",
 				},
@@ -644,12 +832,12 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Updating the exposer with complete auth configuration")
-			updatedExposer := &uiv1alpha1.ScalityUIComponentExposer{}
-			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedExposer)).To(Succeed())
+			By("Updating the ScalityUI auth configuration")
+			updatedUI := &uiv1alpha1.ScalityUI{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "test-ui-auth-update"}, updatedUI)).To(Succeed())
 
-			providerLogout := false
-			updatedExposer.Spec.Auth = &uiv1alpha1.AuthConfig{
+			providerLogout = false
+			updatedUI.Spec.Auth = &uiv1alpha1.AuthConfig{
 				Kind:           "OIDC",
 				ProviderURL:    "https://updated-auth.example.com",
 				RedirectURL:    "/updated-callback",
@@ -658,9 +846,9 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				Scopes:         "openid profile",
 				ProviderLogout: &providerLogout,
 			}
-			Expect(k8sClient.Update(ctx, updatedExposer)).To(Succeed())
+			Expect(k8sClient.Update(ctx, updatedUI)).To(Succeed())
 
-			By("Reconciling the updated resource")
+			By("Reconciling the exposer after UI auth update")
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
@@ -1199,36 +1387,15 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 		})
 
 		It("should not create Ingress when networks are not configured", func() {
-			By("Creating component for no-networks test")
-			componentNoNetworks := &uiv1alpha1.ScalityUIComponent{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-component-no-networks",
-					Namespace: testNamespace,
-				},
-				Spec: uiv1alpha1.ScalityUIComponentSpec{
-					MountPath: "/usr/share/nginx/html/.well-known",
-				},
-			}
-			Expect(k8sClient.Create(ctx, componentNoNetworks)).To(Succeed())
-			// Update status separately since it's a subresource
-			Eventually(func() error {
-				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "test-component-no-networks", Namespace: testNamespace}, componentNoNetworks); err != nil {
-					return err
-				}
-				componentNoNetworks.Status.PublicPath = "/test-component-no-networks"
-				return k8sClient.Status().Update(ctx, componentNoNetworks)
-			}, time.Second*10, time.Millisecond*250).Should(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, componentNoNetworks) }()
-
-			By("Creating exposer without networks configuration")
+			By("Creating exposer using default UI and component (which have no networks configuration)")
 			exposerNoNetworks := &uiv1alpha1.ScalityUIComponentExposer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-exposer-no-networks",
 					Namespace: testNamespace,
 				},
 				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          uiName,
-					ScalityUIComponent: "test-component-no-networks",
+					ScalityUI:          uiName,        // Reuse existing UI constant (no networks)
+					ScalityUIComponent: componentName, // Reuse existing component
 				},
 			}
 			Expect(k8sClient.Create(ctx, exposerNoNetworks)).To(Succeed())

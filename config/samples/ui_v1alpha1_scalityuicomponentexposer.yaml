@@ -7,14 +7,6 @@ spec:
   scalityUI: "scality-ui"
   scalityUIComponent: "dummy-ui"
   appHistoryBasePath: "/"
-  auth:
-    kind: "OIDC"
-    providerUrl: "https://auth.example.com"
-    redirectUrl: "/dashboard"
-    clientId: "my-client-id"
-    responseType: "code"
-    scopes: "openid email profile groups"
-    providerLogout: true
   selfConfiguration:
     url: "https://example.com"
     testArray: ["test1", "test2"]

@@ -44,41 +44,6 @@ spec:
               appHistoryBasePath:
                 description: AppHistoryPath specifies the path to the app history
                 type: string
-              auth:
-                description: Auth contains authentication configuration for the exposed
-                  component
-                properties:
-                  clientId:
-                    description: ClientID is the OIDC client ID
-                    type: string
-                  kind:
-                    default: OIDC
-                    description: Kind specifies the authentication type (e.g., "OIDC")
-                    enum:
-                    - OIDC
-                    - Basic
-                    - None
-                    type: string
-                  providerLogout:
-                    default: true
-                    description: ProviderLogout enables provider logout
-                    type: boolean
-                  providerUrl:
-                    description: ProviderURL is the OIDC provider URL
-                    type: string
-                  redirectUrl:
-                    default: /
-                    description: RedirectURL is the redirect URL after authentication
-                    type: string
-                  responseType:
-                    default: code
-                    description: ResponseType specifies the OIDC response type
-                    type: string
-                  scopes:
-                    default: openid email profile
-                    description: Scopes specifies the OIDC scopes
-                    type: string
-                type: object
               scalityUI:
                 description: ScalityUI references the ScalityUI resource name
                 minLength: 1

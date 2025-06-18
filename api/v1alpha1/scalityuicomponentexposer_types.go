@@ -43,10 +43,6 @@ type ScalityUIComponentExposerSpec struct {
 	// +kubebuilder:validation:Required
 	AppHistoryBasePath string `json:"appHistoryBasePath"`
 
-	// Auth contains authentication configuration for the exposed component
-	// +kubebuilder:validation:Optional
-	Auth *AuthConfig `json:"auth,omitempty"`
-
 	// SelfConfiguration specifies the self configuration
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:pruning:PreserveUnknownFields

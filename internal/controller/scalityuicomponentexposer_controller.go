@@ -416,7 +416,7 @@ func (r *ScalityUIComponentExposerReconciler) buildRuntimeConfiguration(
 	ui *uiv1alpha1.ScalityUI,
 	component *uiv1alpha1.ScalityUIComponent,
 ) (MicroAppRuntimeConfiguration, error) {
-	authConfig, err := r.buildAuthConfig(exposer.Spec.Auth)
+	authConfig, err := r.buildAuthConfig(ui.Spec.Auth)
 	if err != nil {
 		return MicroAppRuntimeConfiguration{}, fmt.Errorf("failed to build auth config: %w", err)
 	}
@@ -446,17 +446,17 @@ func (r *ScalityUIComponentExposerReconciler) buildRuntimeConfiguration(
 	}, nil
 }
 
-// buildAuthConfig builds the authentication configuration
+// buildAuthConfig builds the authentication configuration from ScalityUI
 func (r *ScalityUIComponentExposerReconciler) buildAuthConfig(authSpec *uiv1alpha1.AuthConfig) (map[string]interface{}, error) {
-	// If exposer has auth config, validate it's complete
+	// If ScalityUI has auth config, validate it's complete
 	if authSpec != nil {
 		if err := r.validateAuthConfig(authSpec); err != nil {
-			return nil, fmt.Errorf("exposer auth configuration incomplete: %w", err)
+			return nil, fmt.Errorf("ScalityUI auth configuration incomplete: %w", err)
 		}
 		return r.authConfigToMap(authSpec), nil
 	}
 
-	// No auth configuration available - ScalityUI auth will be implemented in another branch
+	// No auth configuration available from ScalityUI
 	return map[string]interface{}{}, nil
 }
 
