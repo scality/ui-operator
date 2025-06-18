@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
@@ -723,6 +724,380 @@ var _ = Describe("ScalityUI Shell Features", func() {
 	})
 })
 
+var _ = Describe("ScalityUI Status Management", func() {
+	Context("When managing ScalityUI status", func() {
+		const (
+			uiAppName      = "test-ui-status"
+			productName    = "Test Product Status"
+			containerImage = "nginx:latest"
+		)
+
+		ctx := context.Background()
+		clusterScopedName := types.NamespacedName{Name: uiAppName}
+		scalityui := &uiv1alpha1.ScalityUI{}
+
+		BeforeEach(func() {
+			By("Setting up a new ScalityUI for status testing")
+			err := k8sClient.Get(ctx, clusterScopedName, scalityui)
+			if err != nil && errors.IsNotFound(err) {
+				resource := &uiv1alpha1.ScalityUI{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: uiAppName,
+					},
+					Spec: uiv1alpha1.ScalityUISpec{
+						Image:       containerImage,
+						ProductName: productName,
+					},
+				}
+				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+				Eventually(func() error {
+					return k8sClient.Get(ctx, clusterScopedName, scalityui)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			By("Cleaning up status test resources")
+			cleanupTestResources(ctx, clusterScopedName)
+		})
+
+		Describe("Status Initialization", func() {
+			It("should initialize status with appropriate phase and conditions", func() {
+				By("Reconciling the ScalityUI resource")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying the status is properly initialized")
+				updatedUI := &uiv1alpha1.ScalityUI{}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, clusterScopedName, updatedUI)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				By("Checking that status has a valid phase")
+				Expect(updatedUI.Status.Phase).To(BeElementOf([]string{
+					uiv1alpha1.PhasePending,
+					uiv1alpha1.PhaseProgressing,
+					uiv1alpha1.PhaseReady,
+					uiv1alpha1.PhaseFailed,
+				}))
+
+				By("Checking that status has the required conditions")
+				conditions := updatedUI.Status.Conditions
+				Expect(conditions).NotTo(BeEmpty())
+
+				// Check for Ready condition
+				readyCondition := findCondition(conditions, uiv1alpha1.ConditionTypeReady)
+				Expect(readyCondition).NotTo(BeNil())
+				Expect(readyCondition.Type).To(Equal(uiv1alpha1.ConditionTypeReady))
+
+				// Check for Progressing condition
+				progressingCondition := findCondition(conditions, uiv1alpha1.ConditionTypeProgressing)
+				Expect(progressingCondition).NotTo(BeNil())
+				Expect(progressingCondition.Type).To(Equal(uiv1alpha1.ConditionTypeProgressing))
+			})
+		})
+
+		Describe("Status Updates During Resource Creation", func() {
+			It("should update status as resources are created successfully", func() {
+				By("Reconciling the ScalityUI resource")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying all resources are created")
+				// Verify Deployment exists
+				deployment := &appsv1.Deployment{}
+				deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, deploymentName, deployment)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				// Verify Service exists
+				service := &corev1.Service{}
+				serviceName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, serviceName, service)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				// Verify Ingress exists
+				ingress := &networkingv1.Ingress{}
+				ingressName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, ingressName, ingress)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				By("Verifying status reflects successful resource creation")
+				updatedUI := &uiv1alpha1.ScalityUI{}
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, clusterScopedName, updatedUI)
+					if err != nil {
+						return false
+					}
+					return len(updatedUI.Status.Conditions) > 0
+				}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
+
+				// The status should indicate resources are being managed
+				conditions := updatedUI.Status.Conditions
+				Expect(conditions).NotTo(BeEmpty())
+
+				// At minimum, we should have Ready and Progressing conditions
+				readyCondition := findCondition(conditions, uiv1alpha1.ConditionTypeReady)
+				Expect(readyCondition).NotTo(BeNil())
+
+				progressingCondition := findCondition(conditions, uiv1alpha1.ConditionTypeProgressing)
+				Expect(progressingCondition).NotTo(BeNil())
+			})
+		})
+
+		Describe("Status Condition Transitions", func() {
+			It("should properly transition conditions based on resource state", func() {
+				By("Creating a ScalityUI and reconciling")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Simulating deployment readiness by updating deployment status")
+				deployment := &appsv1.Deployment{}
+				deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, deploymentName, deployment)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				// Update deployment status to simulate ready replicas
+				deployment.Status.ReadyReplicas = 1
+				deployment.Status.Replicas = 1
+				deployment.Status.Conditions = []appsv1.DeploymentCondition{
+					{
+						Type:   appsv1.DeploymentProgressing,
+						Status: corev1.ConditionFalse, // Not progressing = stable
+						Reason: "NewReplicaSetAvailable",
+					},
+				}
+				Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+				By("Reconciling again to pick up the deployment status changes")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying conditions reflect the updated resource state")
+				updatedUI := &uiv1alpha1.ScalityUI{}
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, clusterScopedName, updatedUI)
+					if err != nil {
+						return false
+					}
+					readyCondition := findCondition(updatedUI.Status.Conditions, uiv1alpha1.ConditionTypeReady)
+					return readyCondition != nil && readyCondition.Status == metav1.ConditionTrue
+				}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
+
+				// Verify Ready condition is True
+				readyCondition := findCondition(updatedUI.Status.Conditions, uiv1alpha1.ConditionTypeReady)
+				Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
+
+				// Verify Progressing condition is False (stable)
+				progressingCondition := findCondition(updatedUI.Status.Conditions, uiv1alpha1.ConditionTypeProgressing)
+				Expect(progressingCondition.Status).To(Equal(metav1.ConditionFalse))
+			})
+		})
+
+		Describe("Status Error Handling", func() {
+			It("should handle reconciliation errors gracefully", func() {
+				By("Creating a ScalityUI with invalid configuration")
+				invalidUI := &uiv1alpha1.ScalityUI{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test-ui-invalid",
+					},
+					Spec: uiv1alpha1.ScalityUISpec{
+						Image:       "", // Invalid empty image
+						ProductName: "Invalid Test",
+					},
+				}
+				Expect(k8sClient.Create(ctx, invalidUI)).To(Succeed())
+				defer func() {
+					k8sClient.Delete(ctx, invalidUI)
+				}()
+
+				By("Reconciling the invalid resource")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+
+				invalidName := types.NamespacedName{Name: "test-ui-invalid"}
+				result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: invalidName})
+
+				By("Verifying reconciliation fails appropriately")
+				// We expect this to fail due to invalid image
+				Expect(err).To(HaveOccurred())
+				Expect(result).To(Equal(ctrl.Result{}))
+
+				By("Verifying the resource still exists but status may not be updated")
+				updatedInvalidUI := &uiv1alpha1.ScalityUI{}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, invalidName, updatedInvalidUI)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				// Since reconciliation failed early, status may not be updated
+				// This is expected behavior - status is only updated on successful reconciliation
+				By("Verifying the ScalityUI resource exists even after reconciliation failure")
+				Expect(updatedInvalidUI.Name).To(Equal("test-ui-invalid"))
+			})
+
+			It("should update status when reconciliation partially succeeds", func() {
+				By("Creating a valid ScalityUI that will succeed")
+				validUI := &uiv1alpha1.ScalityUI{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test-ui-partial-success",
+					},
+					Spec: uiv1alpha1.ScalityUISpec{
+						Image:       "nginx:latest",
+						ProductName: "Partial Success Test",
+					},
+				}
+				Expect(k8sClient.Create(ctx, validUI)).To(Succeed())
+				defer func() {
+					k8sClient.Delete(ctx, validUI)
+				}()
+
+				By("Reconciling the valid resource")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+
+				validName := types.NamespacedName{Name: "test-ui-partial-success"}
+				result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: validName})
+
+				By("Verifying reconciliation succeeds")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(ctrl.Result{}))
+
+				By("Verifying status is updated after successful reconciliation")
+				updatedValidUI := &uiv1alpha1.ScalityUI{}
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, validName, updatedValidUI)
+					if err != nil {
+						return false
+					}
+					return len(updatedValidUI.Status.Conditions) > 0
+				}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
+
+				// Check that we have conditions set
+				conditions := updatedValidUI.Status.Conditions
+				Expect(conditions).NotTo(BeEmpty())
+
+				// Should have both Ready and Progressing conditions
+				readyCondition := findCondition(conditions, uiv1alpha1.ConditionTypeReady)
+				Expect(readyCondition).NotTo(BeNil())
+
+				progressingCondition := findCondition(conditions, uiv1alpha1.ConditionTypeProgressing)
+				Expect(progressingCondition).NotTo(BeNil())
+
+				// Phase should be set
+				Expect(updatedValidUI.Status.Phase).NotTo(BeEmpty())
+			})
+		})
+
+		Describe("Phase Management", func() {
+			It("should properly set and update the phase field", func() {
+				By("Reconciling a ScalityUI resource")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying the phase is set appropriately")
+				updatedUI := &uiv1alpha1.ScalityUI{}
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, clusterScopedName, updatedUI)
+					return err == nil && updatedUI.Status.Phase != ""
+				}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
+
+				// Phase should be one of the valid phases
+				Expect(updatedUI.Status.Phase).To(BeElementOf([]string{
+					uiv1alpha1.PhasePending,
+					uiv1alpha1.PhaseProgressing,
+					uiv1alpha1.PhaseReady,
+					uiv1alpha1.PhaseFailed,
+				}))
+
+				By("Verifying phase is consistent with conditions")
+				conditions := updatedUI.Status.Conditions
+				if updatedUI.Status.Phase == uiv1alpha1.PhaseReady {
+					readyCondition := findCondition(conditions, uiv1alpha1.ConditionTypeReady)
+					if readyCondition != nil {
+						Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
+					}
+				}
+			})
+		})
+
+		Describe("Status Persistence", func() {
+			It("should persist status updates across reconciliation cycles", func() {
+				By("Performing initial reconciliation")
+				reconciler := &ScalityUIReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					Log:    GinkgoLogr,
+				}
+
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Capturing initial status")
+				firstUI := &uiv1alpha1.ScalityUI{}
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, clusterScopedName, firstUI)
+					return err == nil && len(firstUI.Status.Conditions) > 0
+				}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
+
+				initialConditionCount := len(firstUI.Status.Conditions)
+				initialPhase := firstUI.Status.Phase
+
+				By("Performing second reconciliation")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying status is maintained")
+				secondUI := &uiv1alpha1.ScalityUI{}
+				Expect(k8sClient.Get(ctx, clusterScopedName, secondUI)).To(Succeed())
+
+				// Status should be maintained or improved, not lost
+				Expect(len(secondUI.Status.Conditions)).To(BeNumerically(">=", initialConditionCount))
+				Expect(secondUI.Status.Phase).NotTo(BeEmpty())
+
+				// If phase was set initially, it should still be set
+				if initialPhase != "" {
+					Expect(secondUI.Status.Phase).NotTo(BeEmpty())
+				}
+			})
+		})
+	})
+})
+
 var _ = Describe("getOperatorNamespace", func() {
 	It("should return POD_NAMESPACE environment variable when set", func() {
 		// Set the environment variable
@@ -943,4 +1318,13 @@ func verifyDeployedUIAppsContent(ctx context.Context, appName string, expectedCo
 	var content []map[string]interface{}
 	Expect(json.Unmarshal([]byte(configMap.Data["deployed-ui-apps.json"]), &content)).To(Succeed())
 	Expect(content).To(Equal(expectedContent))
+}
+
+func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for _, condition := range conditions {
+		if condition.Type == conditionType {
+			return &condition
+		}
+	}
+	return nil
 }
