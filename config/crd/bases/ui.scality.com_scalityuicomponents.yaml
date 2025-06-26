@@ -45,6 +45,12 @@ spec:
                   INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
                   Important: Run "make" to regenerate code after modifying this file
                 type: string
+              imagePullSecrets:
+                description: ImagePullSecrets is a list of references to secrets in
+                  the same namespace to use for pulling any images
+                items:
+                  type: string
+                type: array
               mountPath:
                 description: |-
                   MountPath is the directory path where runtime app configuration files will be mounted

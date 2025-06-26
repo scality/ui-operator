@@ -152,6 +152,24 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			By("Checking if Service has correct OwnerReference")
 			verifyOwnerReference(service, "ScalityUIComponent", resourceName)
+
+			By("Checking if Deployment can be updated with imagePullSecrets")
+			fetchedResource := &uiv1alpha1.ScalityUIComponent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, fetchedResource)).To(Succeed())
+			secretName := "my-component-secret"
+			fetchedResource.Spec.ImagePullSecrets = []string{secretName}
+			Expect(k8sClient.Update(ctx, fetchedResource)).To(Succeed())
+
+			// Reconcile again to apply the update
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
+			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets).To(HaveLen(1))
+			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets[0].Name).To(Equal(secretName))
 		})
 
 		It("should requeue if Deployment is not ready", func() {

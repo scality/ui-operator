@@ -156,6 +156,14 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 			}
 		}
 
+		// Convert imagePullSecrets from strings to LocalObjectReference
+		var imagePullSecrets []corev1.LocalObjectReference
+		for _, secret := range scalityUIComponent.Spec.ImagePullSecrets {
+			imagePullSecrets = append(imagePullSecrets, corev1.LocalObjectReference{
+				Name: secret,
+			})
+		}
+
 		deployment.Spec = appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
@@ -170,7 +178,8 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 					Annotations: existingAnnotations,
 				},
 				Spec: corev1.PodSpec{
-					Volumes: existingVolumes,
+					Volumes:          existingVolumes,
+					ImagePullSecrets: imagePullSecrets,
 					Containers: []corev1.Container{
 						{
 							Name:  scalityUIComponent.Name,
