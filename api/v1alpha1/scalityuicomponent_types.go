@@ -32,6 +32,10 @@ type ScalityUIComponentSpec struct {
 	// MountPath is the directory path where runtime app configuration files will be mounted
 	// Each exposer will create a separate file named after the exposer name in this directory
 	MountPath string `json:"mountPath"`
+
+	// ImagePullSecrets is a list of references to secrets in the same namespace to use for pulling any images
+	// +optional
+	ImagePullSecrets []string `json:"imagePullSecrets,omitempty"`
 }
 
 // ScalityUIComponentStatus defines the observed state of ScalityUIComponent
