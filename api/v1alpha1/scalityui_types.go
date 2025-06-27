@@ -28,12 +28,13 @@ import (
 type ScalityUISpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Image       string      `json:"image"`
-	ProductName string      `json:"productName"`
-	Themes      Themes      `json:"themes,omitempty"`
-	Navbar      Navbar      `json:"navbar,omitempty"`
-	Networks    *UINetworks `json:"networks,omitempty"`
-	Auth        *AuthConfig `json:"auth,omitempty"`
+	Image            string      `json:"image"`
+	ProductName      string      `json:"productName"`
+	Themes           Themes      `json:"themes,omitempty"`
+	Navbar           Navbar      `json:"navbar,omitempty"`
+	Networks         *UINetworks `json:"networks,omitempty"`
+	Auth             *AuthConfig `json:"auth,omitempty"`
+	ImagePullSecrets []string    `json:"imagePullSecrets,omitempty"`
 }
 
 // Themes defines the various themes supported by the UI.
