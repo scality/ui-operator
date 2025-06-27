@@ -78,6 +78,10 @@ spec:
                   INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
                   Important: Run "make" to regenerate code after modifying this file
                 type: string
+              imagePullSecrets:
+                items:
+                  type: string
+                type: array
               navbar:
                 description: Navbar configures the UI navbar.
                 properties:
