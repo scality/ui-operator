@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"fmt"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -85,4 +87,25 @@ type ScalityUIComponentExposerList struct {
 
 func init() {
 	SchemeBuilder.Register(&ScalityUIComponentExposer{}, &ScalityUIComponentExposerList{})
+}
+
+// SourceResource interface implementation for reconciler-framework
+func (e *ScalityUIComponentExposer) GetVersion() string {
+	// Generate version from key spec fields
+	return fmt.Sprintf("%s-%s",
+		e.Spec.ScalityUI,
+		e.Spec.ScalityUIComponent)
+}
+
+func (e *ScalityUIComponentExposer) GetImagePullSecretNames() []string {
+	// Exposers don't directly manage images, return empty slice
+	return []string{}
+}
+
+func (e *ScalityUIComponentExposer) GetInstanceID() string {
+	// Use a combination of name and namespace as instance ID
+	if e.Namespace != "" {
+		return fmt.Sprintf("%s.%s", e.Name, e.Namespace)
+	}
+	return e.Name
 }
