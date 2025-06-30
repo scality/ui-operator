@@ -259,10 +259,7 @@ func (r *ScalityUIReconciler) createOrUpdateDeployment(ctx context.Context, depl
 		deploy.Spec.Template.Labels["app"] = scalityui.Name
 
 		// Add ImagePullSecrets if they are specified in the ScalityUI spec
-		var imagePullSecrets []corev1.LocalObjectReference
-		for _, secretName := range scalityui.Spec.ImagePullSecrets {
-			imagePullSecrets = append(imagePullSecrets, corev1.LocalObjectReference{Name: secretName})
-		}
+		imagePullSecrets := append([]corev1.LocalObjectReference{}, scalityui.Spec.ImagePullSecrets...)
 		deploy.Spec.Template.Spec.ImagePullSecrets = imagePullSecrets
 
 		// Manage PodTemplate Annotations
