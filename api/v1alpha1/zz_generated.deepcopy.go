@@ -389,7 +389,7 @@ func (in *ScalityUIComponentSpec) DeepCopyInto(out *ScalityUIComponentSpec) {
 	*out = *in
 	if in.ImagePullSecrets != nil {
 		in, out := &in.ImagePullSecrets, &out.ImagePullSecrets
-		*out = make([]string, len(*in))
+		*out = make([]corev1.LocalObjectReference, len(*in))
 		copy(*out, *in)
 	}
 }

@@ -156,13 +156,8 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 			}
 		}
 
-		// Convert imagePullSecrets from strings to LocalObjectReference
-		var imagePullSecrets []corev1.LocalObjectReference
-		for _, secret := range scalityUIComponent.Spec.ImagePullSecrets {
-			imagePullSecrets = append(imagePullSecrets, corev1.LocalObjectReference{
-				Name: secret,
-			})
-		}
+		// Use imagePullSecrets directly
+		imagePullSecrets := append([]corev1.LocalObjectReference{}, scalityUIComponent.Spec.ImagePullSecrets...)
 
 		deployment.Spec = appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{

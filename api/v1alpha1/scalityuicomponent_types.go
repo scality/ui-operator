@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -35,7 +36,7 @@ type ScalityUIComponentSpec struct {
 
 	// ImagePullSecrets is a list of references to secrets in the same namespace to use for pulling any images
 	// +optional
-	ImagePullSecrets []string `json:"imagePullSecrets,omitempty"`
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 }
 
 // ScalityUIComponentStatus defines the observed state of ScalityUIComponent
