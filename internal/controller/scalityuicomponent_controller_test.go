@@ -153,23 +153,43 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			By("Checking if Service has correct OwnerReference")
 			verifyOwnerReference(service, "ScalityUIComponent", resourceName)
 
-			By("Checking if Deployment can be updated with imagePullSecrets")
+			By("Testing various imagePullSecrets scenarios")
 			fetchedResource := &uiv1alpha1.ScalityUIComponent{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, fetchedResource)).To(Succeed())
-			secretName := "my-component-secret"
-			fetchedResource.Spec.ImagePullSecrets = []string{secretName}
-			Expect(k8sClient.Update(ctx, fetchedResource)).To(Succeed())
 
-			// Reconcile again to apply the update
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
+			// Test single imagePullSecret
+			fetchedResource.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "single-secret"}}
+			Expect(k8sClient.Update(ctx, fetchedResource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			updatedDeployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
 			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets).To(HaveLen(1))
-			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets[0].Name).To(Equal(secretName))
+			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets[0].Name).To(Equal("single-secret"))
+
+			// Test multiple imagePullSecrets
+			fetchedResource.Spec.ImagePullSecrets = []corev1.LocalObjectReference{
+				{Name: "secret-1"}, {Name: "secret-2"}, {Name: "secret-3"},
+			}
+			Expect(k8sClient.Update(ctx, fetchedResource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
+			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets).To(HaveLen(3))
+			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets[0].Name).To(Equal("secret-1"))
+			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets[1].Name).To(Equal("secret-2"))
+			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets[2].Name).To(Equal("secret-3"))
+
+			// Test empty imagePullSecrets
+			fetchedResource.Spec.ImagePullSecrets = []corev1.LocalObjectReference{}
+			Expect(k8sClient.Update(ctx, fetchedResource)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
+			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets).To(BeEmpty())
 		})
 
 		It("should requeue if Deployment is not ready", func() {
