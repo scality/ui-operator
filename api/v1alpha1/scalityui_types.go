@@ -17,6 +17,9 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"fmt"
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -198,4 +201,30 @@ type ScalityUIList struct {
 
 func init() {
 	SchemeBuilder.Register(&ScalityUI{}, &ScalityUIList{})
+}
+
+// SourceResource interface implementation for reconciler-framework
+func (s *ScalityUI) GetVersion() string {
+	// Extract version from image tag
+	image := s.Spec.Image
+	if colonIndex := strings.LastIndex(image, ":"); colonIndex != -1 {
+		return image[colonIndex+1:]
+	}
+	return "latest"
+}
+
+func (s *ScalityUI) GetImagePullSecretNames() []string {
+	secretNames := make([]string, len(s.Spec.ImagePullSecrets))
+	for i, secret := range s.Spec.ImagePullSecrets {
+		secretNames[i] = secret.Name
+	}
+	return secretNames
+}
+
+func (s *ScalityUI) GetInstanceID() string {
+	// Use a combination of name and namespace as instance ID
+	if s.Namespace != "" {
+		return fmt.Sprintf("%s.%s", s.Name, s.Namespace)
+	}
+	return s.Name
 }
