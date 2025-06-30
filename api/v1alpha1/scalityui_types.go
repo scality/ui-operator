@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -28,13 +29,13 @@ import (
 type ScalityUISpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Image            string      `json:"image"`
-	ProductName      string      `json:"productName"`
-	Themes           Themes      `json:"themes,omitempty"`
-	Navbar           Navbar      `json:"navbar,omitempty"`
-	Networks         *UINetworks `json:"networks,omitempty"`
-	Auth             *AuthConfig `json:"auth,omitempty"`
-	ImagePullSecrets []string    `json:"imagePullSecrets,omitempty"`
+	Image            string                        `json:"image"`
+	ProductName      string                        `json:"productName"`
+	Themes           Themes                        `json:"themes,omitempty"`
+	Navbar           Navbar                        `json:"navbar,omitempty"`
+	Networks         *UINetworks                   `json:"networks,omitempty"`
+	Auth             *AuthConfig                   `json:"auth,omitempty"`
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 }
 
 // Themes defines the various themes supported by the UI.
