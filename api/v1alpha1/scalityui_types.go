@@ -17,7 +17,6 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"fmt"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -222,9 +221,6 @@ func (s *ScalityUI) GetImagePullSecretNames() []string {
 }
 
 func (s *ScalityUI) GetInstanceID() string {
-	// Use a combination of name and namespace as instance ID
-	if s.Namespace != "" {
-		return fmt.Sprintf("%s.%s", s.Name, s.Namespace)
-	}
+	// ScalityUI is cluster-scoped, use name directly
 	return s.Name
 }
