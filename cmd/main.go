@@ -37,7 +37,9 @@ import (
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 	"github.com/scality/ui-operator/internal/controller"
+
 	// +kubebuilder:scaffold:imports
+	"github.com/scality/ui-operator/internal/controller/scalityuicomponent"
 )
 
 var (
@@ -153,7 +155,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ScalityUI")
 		os.Exit(1)
 	}
-	if err = (&controller.ScalityUIComponentReconciler{
+	if err = (&scalityuicomponent.ScalityUIComponentReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
