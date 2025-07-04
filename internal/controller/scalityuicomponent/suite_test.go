@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	rckversion "github.com/scality/reconciler-framework/version"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,6 +34,9 @@ func TestScalityUIComponentController(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+
+	// Set operator info for the reconciler framework
+	rckversion.SetOperatorInfo("ui-operator-test", "v0.0.0")
 
 	ctx, cancel = context.WithCancel(context.TODO())
 

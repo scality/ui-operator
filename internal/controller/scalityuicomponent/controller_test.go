@@ -67,6 +67,16 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Name:      resourceName,
 			Namespace: testNamespace,
 		}
+		// Framework creates deployment with name {resourceName}-deployment
+		deploymentNamespacedName := types.NamespacedName{
+			Name:      resourceName + "-deployment",
+			Namespace: testNamespace,
+		}
+		// Framework creates service with name {resourceName}-service
+		serviceNamespacedName := types.NamespacedName{
+			Name:      resourceName + "-service",
+			Namespace: testNamespace,
+		}
 		scalityuicomponent := &uiv1alpha1.ScalityUIComponent{}
 
 		BeforeEach(func() {
@@ -98,10 +108,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIComponentReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
+			controllerReconciler := NewScalityUIComponentReconciler(k8sClient, k8sClient.Scheme())
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
@@ -110,7 +117,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			By("Checking if Deployment was created with correct specifications")
 			deployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, typeNamespacedName, deployment)
+			err = k8sClient.Get(ctx, deploymentNamespacedName, deployment)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
@@ -125,7 +132,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			By("Checking if Service was created with correct specifications")
 			service := &corev1.Service{}
-			err = k8sClient.Get(ctx, typeNamespacedName, service)
+			err = k8sClient.Get(ctx, serviceNamespacedName, service)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(service.Spec.Selector["app"]).To(Equal(resourceName))
@@ -148,7 +155,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			updatedDeployment := &appsv1.Deployment{}
-			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
+			Expect(k8sClient.Get(ctx, deploymentNamespacedName, updatedDeployment)).To(Succeed())
 			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets).To(HaveLen(1))
 			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets[0].Name).To(Equal("single-secret"))
 
@@ -160,7 +167,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
+			Expect(k8sClient.Get(ctx, deploymentNamespacedName, updatedDeployment)).To(Succeed())
 			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets).To(HaveLen(3))
 			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets[0].Name).To(Equal("secret-1"))
 			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets[1].Name).To(Equal("secret-2"))
@@ -172,18 +179,15 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
+			Expect(k8sClient.Get(ctx, deploymentNamespacedName, updatedDeployment)).To(Succeed())
 			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets).To(BeEmpty())
 		})
 
 		It("should requeue if Deployment is not ready", func() {
 			By("Reconciling the created resource")
 			mockFetcher := &MockConfigFetcher{}
-			controllerReconciler := &ScalityUIComponentReconciler{
-				Client:        k8sClient,
-				Scheme:        k8sClient.Scheme(),
-				ConfigFetcher: mockFetcher,
-			}
+			controllerReconciler := NewScalityUIComponentReconciler(k8sClient, k8sClient.Scheme())
+			controllerReconciler.ConfigFetcher = mockFetcher
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
@@ -194,7 +198,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			By("Ensuring Deployment exists")
 			deployment := &appsv1.Deployment{}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+				return k8sClient.Get(ctx, deploymentNamespacedName, deployment)
 			}, time.Second*5, time.Millisecond*250).Should(Succeed())
 
 			By("Updating Deployment status to not ready")
@@ -207,7 +211,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(time.Second * 10))
+			Expect(result.Requeue).To(BeTrue()) // Framework returns Requeue: true when deployment not ready
 
 			// Check that no status condition for ConfigurationRetrieved was added yet
 			updatedScalityUIComponent := &uiv1alpha1.ScalityUIComponent{}
@@ -226,11 +230,8 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			}
 
 			By("Reconciling the created resource")
-			controllerReconciler := &ScalityUIComponentReconciler{
-				Client:        k8sClient,
-				Scheme:        k8sClient.Scheme(),
-				ConfigFetcher: mockFetcher,
-			}
+			controllerReconciler := NewScalityUIComponentReconciler(k8sClient, k8sClient.Scheme())
+			controllerReconciler.ConfigFetcher = mockFetcher
 
 			// First reconcile to create Deployment and Service
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -241,11 +242,20 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			By("Ensuring Deployment exists and making it ready")
 			deployment := &appsv1.Deployment{}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+				return k8sClient.Get(ctx, deploymentNamespacedName, deployment)
 			}, time.Second*5, time.Millisecond*250).Should(Succeed())
 
-			deployment.Status.ReadyReplicas = 1
-			deployment.Status.Replicas = 1
+			// Mark deployment as ready according to framework's IsSettled requirements
+			deployment.Status.UpdatedReplicas = *deployment.Spec.Replicas
+			deployment.Status.Replicas = *deployment.Spec.Replicas
+			deployment.Status.ReadyReplicas = *deployment.Spec.Replicas
+			deployment.Status.AvailableReplicas = *deployment.Spec.Replicas
+			deployment.Status.Conditions = []appsv1.DeploymentCondition{
+				{
+					Type:   appsv1.DeploymentAvailable,
+					Status: corev1.ConditionTrue,
+				},
+			}
 			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
 
 			By("Triggering Reconcile again for config fetch logic")
@@ -253,7 +263,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred()) // The reconcile itself should not error, but requeue
-			Expect(result.RequeueAfter).To(Equal(time.Second * 10))
+			Expect(result.Requeue).To(BeTrue())
 
 			By("Checking ScalityUIComponent status conditions")
 			updatedScalityUIComponent := &uiv1alpha1.ScalityUIComponent{}
@@ -288,19 +298,26 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 				}`,
 			}
 
-			controllerReconciler := &ScalityUIComponentReconciler{
-				Client:        k8sClient,
-				Scheme:        k8sClient.Scheme(),
-				ConfigFetcher: mockFetcher,
-			}
+			controllerReconciler := NewScalityUIComponentReconciler(k8sClient, k8sClient.Scheme())
+			controllerReconciler.ConfigFetcher = mockFetcher
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			deployment := &appsv1.Deployment{}
-			Eventually(func() error { return k8sClient.Get(ctx, typeNamespacedName, deployment) }, time.Second*5, time.Millisecond*250).Should(Succeed())
-			deployment.Status.ReadyReplicas = 1
-			deployment.Status.Replicas = 1
+			Eventually(func() error { return k8sClient.Get(ctx, deploymentNamespacedName, deployment) }, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			// Mark deployment as ready according to framework's IsSettled requirements
+			deployment.Status.UpdatedReplicas = *deployment.Spec.Replicas
+			deployment.Status.Replicas = *deployment.Spec.Replicas
+			deployment.Status.ReadyReplicas = *deployment.Spec.Replicas
+			deployment.Status.AvailableReplicas = *deployment.Spec.Replicas
+			deployment.Status.Conditions = []appsv1.DeploymentCondition{
+				{
+					Type:   appsv1.DeploymentAvailable,
+					Status: corev1.ConditionTrue,
+				},
+			}
 			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
@@ -318,34 +335,46 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal("FetchSucceeded"))
 			Expect(cond.Message).To(Equal("Successfully fetched and applied UI component configuration"))
+
+			By("Verifying that the mock was called with correct parameters")
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
+			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
+			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
+			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
 		})
 
 		It("should set ConfigurationRetrieved=False with ParseFailed reason if config parse fails", func() {
 			By("Creating a mock config fetcher with malformed JSON")
 			mockFetcher := &MockConfigFetcher{
 				ShouldFail:    false,
-				ConfigContent: `{"metadata": {"kind": "TestKind"}, "spec": {"publicPath": "/test/", "version": "1.2.3"}, MALFORMED`,
+				ConfigContent: `{"kind": "UIModule", "invalid": json}`,
 			}
 
-			controllerReconciler := &ScalityUIComponentReconciler{
-				Client:        k8sClient,
-				Scheme:        k8sClient.Scheme(),
-				ConfigFetcher: mockFetcher,
-			}
+			controllerReconciler := NewScalityUIComponentReconciler(k8sClient, k8sClient.Scheme())
+			controllerReconciler.ConfigFetcher = mockFetcher
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			deployment := &appsv1.Deployment{}
-			Eventually(func() error { return k8sClient.Get(ctx, typeNamespacedName, deployment) }, time.Second*5, time.Millisecond*250).Should(Succeed())
+			Eventually(func() error { return k8sClient.Get(ctx, deploymentNamespacedName, deployment) }, time.Second*5, time.Millisecond*250).Should(Succeed())
 
-			deployment.Status.ReadyReplicas = 1
-			deployment.Status.Replicas = 1
+			// Mark deployment as ready according to framework's IsSettled requirements
+			deployment.Status.UpdatedReplicas = *deployment.Spec.Replicas
+			deployment.Status.Replicas = *deployment.Spec.Replicas
+			deployment.Status.ReadyReplicas = *deployment.Spec.Replicas
+			deployment.Status.AvailableReplicas = *deployment.Spec.Replicas
+			deployment.Status.Conditions = []appsv1.DeploymentCondition{
+				{
+					Type:   appsv1.DeploymentAvailable,
+					Status: corev1.ConditionTrue,
+				},
+			}
 			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(time.Second * 10))
+			Expect(result.Requeue).To(BeTrue())
 
 			updatedScalityUIComponent := &uiv1alpha1.ScalityUIComponent{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedScalityUIComponent)).To(Succeed())
@@ -354,24 +383,26 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("ParseFailed"))
-			Expect(cond.Message).To(ContainSubstring("Failed to parse configuration:"))
+			Expect(cond.Message).To(ContainSubstring("Failed to parse configuration"))
+
+			By("Verifying that the mock was called with correct parameters")
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
+			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
+			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
+			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
 		})
 
 		It("should preserve existing volumes and volume mounts during deployment update", func() {
 			By("Creating initial deployment with custom volumes")
-			controllerReconciler := &ScalityUIComponentReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
+			controllerReconciler := NewScalityUIComponentReconciler(k8sClient, k8sClient.Scheme())
 
-			// First reconcile to create deployment
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Manually adding custom volumes and volume mounts to deployment")
 			deployment := &appsv1.Deployment{}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+				return k8sClient.Get(ctx, deploymentNamespacedName, deployment)
 			}, time.Second*5, time.Millisecond*250).Should(Succeed())
 
 			// Add custom volume and mount
@@ -407,7 +438,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			By("Verifying custom volumes and mounts are preserved")
 			updatedDeployment := &appsv1.Deployment{}
-			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedDeployment)).To(Succeed())
+			Expect(k8sClient.Get(ctx, deploymentNamespacedName, updatedDeployment)).To(Succeed())
 
 			// Check volumes
 			Expect(updatedDeployment.Spec.Template.Spec.Volumes).To(HaveLen(1))

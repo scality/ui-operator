@@ -25,6 +25,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	rckversion "github.com/scality/reconciler-framework/version"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -47,6 +48,9 @@ import (
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+
+	// Version of the operator. Set at link time by the build system, using -X ldflags
+	version = "v0.0.0-dev"
 )
 
 func init() {
@@ -80,6 +84,8 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	rckversion.SetOperatorInfo("ui-operator", version)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -157,10 +163,10 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ScalityUI")
 		os.Exit(1)
 	}
-	if err = (&scalityuicomponent.ScalityUIComponentReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+	if err = scalityuicomponent.NewScalityUIComponentReconciler(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+	).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ScalityUIComponent")
 		os.Exit(1)
 	}
