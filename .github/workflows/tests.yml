@@ -8,7 +8,6 @@ on:
 
 env:
   GO_VERSION: "1.24.3"
-  GOPRIVATE: "github.com/scality"
 
 jobs:
   test:
@@ -17,24 +16,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Create GitHub App Token
-        uses: actions/create-github-app-token@v1
-        id: app-token
-        with:
-          app-id: ${{ vars.ACTIONS_APP_ID }}
-          private-key: ${{ secrets.ACTIONS_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-
-      - name: Authenticate git requests
-        shell: bash
-        run: |
-          git config --global --add url.https://git:${{ env.GIT_TOKEN }}@github.com/.insteadOf git@github.com:
-          git config --global --add url.https://git:${{ env.GIT_TOKEN }}@github.com/.insteadOf ssh://git@github.com/
-          git config --global --add url.https://git:${{ env.GIT_TOKEN }}@github.com/.insteadOf https://github.com/
-        env:
-          GIT_TOKEN: ${{ steps.app-token.outputs.token }}
+        uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v4
