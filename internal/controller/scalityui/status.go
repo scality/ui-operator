@@ -1,4 +1,4 @@
-package controller
+package scalityui
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	uiscalitycomv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
+	controller "github.com/scality/ui-operator/internal/controller"
 )
 
 // updateScalityUIStatus updates the ScalityUI status using common_status.go infrastructure
@@ -21,10 +22,10 @@ func (r *ScalityUIReconciler) updateScalityUIStatus(ctx context.Context, scality
 	ingress, ingressErr := r.getScalityUIIngress(ctx, scalityui)
 
 	// Create common status reconciler
-	commonStatusReconciler := NewCommonStatusReconciler(r.Client)
+	commonStatusReconciler := controller.NewCommonStatusReconciler(r.Client)
 
 	// Build condition updates using helper functions
-	var conditionUpdates []ConditionUpdate
+	var conditionUpdates []controller.ConditionUpdate
 
 	// Add Progressing condition
 	conditionUpdates = append(conditionUpdates, r.buildProgressingCondition(deployment, service, ingress, deploymentErr, serviceErr, ingressErr))
@@ -43,7 +44,7 @@ func (r *ScalityUIReconciler) updateScalityUIStatus(ctx context.Context, scality
 }
 
 // buildProgressingCondition builds the Progressing condition based on resource state
-func (r *ScalityUIReconciler) buildProgressingCondition(deployment *appsv1.Deployment, service *corev1.Service, ingress *networkingv1.Ingress, deploymentErr, serviceErr, ingressErr error) ConditionUpdate {
+func (r *ScalityUIReconciler) buildProgressingCondition(deployment *appsv1.Deployment, service *corev1.Service, ingress *networkingv1.Ingress, deploymentErr, serviceErr, ingressErr error) controller.ConditionUpdate {
 	// Check for common errors/missing resources
 	if commonCondition := r.checkCommonResourceIssues(uiscalitycomv1alpha1.ConditionTypeProgressing, deployment, service, ingress, deploymentErr, serviceErr, ingressErr); commonCondition != nil {
 		return *commonCondition
@@ -51,7 +52,7 @@ func (r *ScalityUIReconciler) buildProgressingCondition(deployment *appsv1.Deplo
 
 	// Check if deployment is progressing
 	if isDeploymentProgressing(deployment) {
-		return ConditionUpdate{
+		return controller.ConditionUpdate{
 			Type:    uiscalitycomv1alpha1.ConditionTypeProgressing,
 			Status:  metav1.ConditionTrue,
 			Reason:  uiscalitycomv1alpha1.ReasonProgressing,
@@ -60,7 +61,7 @@ func (r *ScalityUIReconciler) buildProgressingCondition(deployment *appsv1.Deplo
 	}
 
 	// Deployment is stable
-	return ConditionUpdate{
+	return controller.ConditionUpdate{
 		Type:    uiscalitycomv1alpha1.ConditionTypeProgressing,
 		Status:  metav1.ConditionFalse,
 		Reason:  uiscalitycomv1alpha1.ReasonProgressing,
@@ -69,7 +70,7 @@ func (r *ScalityUIReconciler) buildProgressingCondition(deployment *appsv1.Deplo
 }
 
 // buildReadyCondition builds the Ready condition based on resource state
-func (r *ScalityUIReconciler) buildReadyCondition(deployment *appsv1.Deployment, service *corev1.Service, ingress *networkingv1.Ingress, deploymentErr, serviceErr, ingressErr error) ConditionUpdate {
+func (r *ScalityUIReconciler) buildReadyCondition(deployment *appsv1.Deployment, service *corev1.Service, ingress *networkingv1.Ingress, deploymentErr, serviceErr, ingressErr error) controller.ConditionUpdate {
 	// Check for common errors/missing resources
 	if commonCondition := r.checkCommonResourceIssues(uiscalitycomv1alpha1.ConditionTypeReady, deployment, service, ingress, deploymentErr, serviceErr, ingressErr); commonCondition != nil {
 		return *commonCondition
@@ -77,7 +78,7 @@ func (r *ScalityUIReconciler) buildReadyCondition(deployment *appsv1.Deployment,
 
 	// Check if deployment has ready replicas
 	if deployment.Status.ReadyReplicas == 0 {
-		return ConditionUpdate{
+		return controller.ConditionUpdate{
 			Type:    uiscalitycomv1alpha1.ConditionTypeReady,
 			Status:  metav1.ConditionFalse,
 			Reason:  uiscalitycomv1alpha1.ReasonNotReady,
@@ -86,7 +87,7 @@ func (r *ScalityUIReconciler) buildReadyCondition(deployment *appsv1.Deployment,
 	}
 
 	// All checks passed - ready
-	return ConditionUpdate{
+	return controller.ConditionUpdate{
 		Type:    uiscalitycomv1alpha1.ConditionTypeReady,
 		Status:  metav1.ConditionTrue,
 		Reason:  uiscalitycomv1alpha1.ReasonReady,
@@ -96,7 +97,7 @@ func (r *ScalityUIReconciler) buildReadyCondition(deployment *appsv1.Deployment,
 
 // checkCommonResourceIssues checks for common resource errors and missing resources
 // Returns nil if no common issues found, otherwise returns the appropriate condition
-func (r *ScalityUIReconciler) checkCommonResourceIssues(conditionType string, deployment *appsv1.Deployment, service *corev1.Service, ingress *networkingv1.Ingress, deploymentErr, serviceErr, ingressErr error) *ConditionUpdate {
+func (r *ScalityUIReconciler) checkCommonResourceIssues(conditionType string, deployment *appsv1.Deployment, service *corev1.Service, ingress *networkingv1.Ingress, deploymentErr, serviceErr, ingressErr error) *controller.ConditionUpdate {
 	// Check for errors first
 	if deploymentErr != nil || serviceErr != nil || ingressErr != nil {
 		reason := uiscalitycomv1alpha1.ReasonReconcileError
@@ -105,7 +106,7 @@ func (r *ScalityUIReconciler) checkCommonResourceIssues(conditionType string, de
 			reason = uiscalitycomv1alpha1.ReasonNotReady
 			message = "Error with resources"
 		}
-		return &ConditionUpdate{
+		return &controller.ConditionUpdate{
 			Type:    conditionType,
 			Status:  metav1.ConditionFalse,
 			Reason:  reason,
@@ -121,7 +122,7 @@ func (r *ScalityUIReconciler) checkCommonResourceIssues(conditionType string, de
 			reason = uiscalitycomv1alpha1.ReasonNotReady
 			message = "Missing resources"
 		}
-		return &ConditionUpdate{
+		return &controller.ConditionUpdate{
 			Type:    conditionType,
 			Status:  metav1.ConditionFalse,
 			Reason:  reason,
