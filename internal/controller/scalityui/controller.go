@@ -255,7 +255,7 @@ func logOperationResult(logger logr.Logger, result controllerutil.OperationResul
 	case controllerutil.OperationResultUpdated:
 		logger.Info(fmt.Sprintf("%s updated", resourceType), "name", resourceName)
 	case controllerutil.OperationResultNone:
-		logger.Info(fmt.Sprintf("%s unchanged", resourceType), "name", resourceName)
+		// No change needed
 	default:
 		logger.Info(fmt.Sprintf("%s operation completed", resourceType), "name", resourceName, "result", result)
 	}
