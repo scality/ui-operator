@@ -7,12 +7,28 @@ import (
 
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+// getServiceNameFromFramework gets the service name by querying the actual service created by the framework
+func getServiceNameFromFramework(ctx context.Context, kubeClient client.Client, cr ScalityUIComponent) (string, error) {
+	// Query the service directly from the cluster using the framework's naming convention
+	service := &corev1.Service{}
+	serviceName := fmt.Sprintf("%s-service", cr.Name)
+	err := kubeClient.Get(ctx, client.ObjectKey{
+		Name:      serviceName,
+		Namespace: cr.Namespace,
+	}, service)
+	if err != nil {
+		return "", fmt.Errorf("failed to get service %s: %w", serviceName, err)
+	}
+	return service.Name, nil
+}
 
 // newConfigReducer creates a StateReducer for handling configuration fetching and processing
 func newConfigReducer(r *ScalityUIComponentReconciler) StateReducer {
@@ -27,9 +43,9 @@ func newConfigReducer(r *ScalityUIComponentReconciler) StateReducer {
 				return reconcile.Result{}, nil
 			}
 
-			// Also skip if there's a recent failed condition to avoid continuous refetching
-			if existingCondition != nil && existingCondition.Status == metav1.ConditionFalse {
-				log.V(1).Info("Configuration fetch recently failed, skipping")
+			// Skip if there's a recent failed condition with ParseFailed reason to avoid continuous retries
+			if existingCondition != nil && existingCondition.Status == metav1.ConditionFalse && existingCondition.Reason == "ParseFailed" {
+				log.V(1).Info("Configuration parse recently failed, skipping")
 				return ctrl.Result{Requeue: true}, nil
 			}
 
@@ -37,14 +53,14 @@ func newConfigReducer(r *ScalityUIComponentReconciler) StateReducer {
 			// This is crucial for determining if pods are ready before attempting to fetch the UI configuration
 			deployment := &appsv1.Deployment{}
 			deploymentName := fmt.Sprintf("%s-deployment", cr.Name)
-			if err := r.Client.Get(ctx, client.ObjectKey{Name: deploymentName, Namespace: cr.Namespace}, deployment); err != nil {
+			if err := currentState.GetKubeClient().Get(ctx, client.ObjectKey{Name: deploymentName, Namespace: cr.Namespace}, deployment); err != nil {
 				log.Error(err, "Failed to get deployment status")
 				return ctrl.Result{Requeue: true}, nil
 			}
 
 			if deployment.Status.ReadyReplicas > 0 {
 				// Fetch and process configuration
-				return r.processUIComponentConfig(ctx, cr, log)
+				return r.processUIComponentConfig(ctx, cr, currentState, log)
 			} else {
 				log.Info("Deployment not ready yet, waiting for pods to start")
 				return ctrl.Result{Requeue: true}, nil
@@ -56,9 +72,16 @@ func newConfigReducer(r *ScalityUIComponentReconciler) StateReducer {
 
 // processUIComponentConfig fetches and processes UI component configuration,
 // updates the status and returns the reconcile result
-func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Context, scalityUIComponent ScalityUIComponent, logger logr.Logger) (ctrl.Result, error) {
+func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Context, scalityUIComponent ScalityUIComponent, currentState State, logger logr.Logger) (ctrl.Result, error) {
 	// Fetch configuration
-	configContent, err := r.fetchMicroAppConfig(ctx, scalityUIComponent.Namespace, scalityUIComponent.Name)
+	// Get the actual service name from the framework
+	serviceName, err := getServiceNameFromFramework(ctx, currentState.GetKubeClient(), scalityUIComponent)
+	if err != nil {
+		logger.Error(err, "Failed to get service name from framework")
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	configContent, err := r.fetchMicroAppConfig(ctx, scalityUIComponent.Namespace, serviceName)
 
 	if err != nil {
 		logger.Error(err, "Failed to fetch micro-app-configuration")

@@ -154,12 +154,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&scalityui.ScalityUIReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Log:      ctrl.Log.WithName("controllers").WithName("ScalityUI"),
-		Recorder: mgr.GetEventRecorderFor("scalityui-controller"),
-	}).SetupWithManager(mgr); err != nil {
+	if err = scalityui.NewScalityUIReconciler(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+	).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ScalityUI")
 		os.Exit(1)
 	}

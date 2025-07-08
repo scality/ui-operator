@@ -68,11 +68,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 		Describe("Basic Shell UI Deployment", func() {
 			It("should deploy a working Shell UI with default configuration", func() {
 				By("Processing the Shell UI deployment")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
@@ -98,7 +94,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				updatedDeployment := &appsv1.Deployment{}
-				deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+				deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
 				Eventually(func() error {
 					return k8sClient.Get(ctx, deploymentName, updatedDeployment)
 				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
@@ -138,11 +134,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 		Describe("Shell UI Customization Features", func() {
 			It("should allow customization of shell branding and navigation", func() {
 				By("Deploying the Shell UI initially")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
 
@@ -207,11 +199,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 		Describe("Shell Application Updates", func() {
 			It("should handle shell application image updates seamlessly", func() {
 				By("Deploying the initial Shell UI")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
 
@@ -253,17 +241,13 @@ var _ = Describe("ScalityUI Shell Features", func() {
 					}()
 
 					By("Deploying the Shell UI")
-					reconciler := &ScalityUIReconciler{
-						Client: k8sClient,
-						Scheme: k8sClient.Scheme(),
-						Log:    GinkgoLogr,
-					}
+					reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 					_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 					Expect(err).NotTo(HaveOccurred())
 
 					By("Verifying single replica deployment")
 					deployment := &appsv1.Deployment{}
-					deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+					deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
 					Eventually(func() error {
 						return k8sClient.Get(ctx, deploymentName, deployment)
 					}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
@@ -311,17 +295,13 @@ var _ = Describe("ScalityUI Shell Features", func() {
 					}()
 
 					By("Deploying the Shell UI")
-					reconciler := &ScalityUIReconciler{
-						Client: k8sClient,
-						Scheme: k8sClient.Scheme(),
-						Log:    GinkgoLogr,
-					}
+					reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 					_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 					Expect(err).NotTo(HaveOccurred())
 
 					By("Verifying high availability deployment with 2 replicas")
 					deployment := &appsv1.Deployment{}
-					deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+					deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
 					Eventually(func() error {
 						return k8sClient.Get(ctx, deploymentName, deployment)
 					}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
@@ -362,17 +342,13 @@ var _ = Describe("ScalityUI Shell Features", func() {
 					}()
 
 					By("Deploying the Shell UI with single node")
-					reconciler := &ScalityUIReconciler{
-						Client: k8sClient,
-						Scheme: k8sClient.Scheme(),
-						Log:    GinkgoLogr,
-					}
+					reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 					_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 					Expect(err).NotTo(HaveOccurred())
 
 					By("Verifying single replica deployment initially")
 					deployment := &appsv1.Deployment{}
-					deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+					deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
 					Eventually(func() error {
 						return k8sClient.Get(ctx, deploymentName, deployment)
 					}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
@@ -422,11 +398,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 		Describe("Deployed UI Apps Management", func() {
 			It("should update deployed-ui-apps ConfigMap when exposers are added", func() {
 				By("Deploying the Shell UI and verifying initial empty state")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
 
@@ -646,10 +618,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
 			By("Reconciling the resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
+			controllerReconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: clusterScopedName,
 			})
@@ -657,7 +626,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 			By("Verifying that an Ingress is created in the target namespace")
 			ingress := &networkingv1.Ingress{}
-			ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
+			ingressName := types.NamespacedName{Name: resourceName + "-ingress", Namespace: getOperatorNamespace()}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, ingressName, ingress)
 			}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
@@ -666,7 +635,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			Expect(ingress.Spec.Rules).To(HaveLen(1))
 			Expect(ingress.Spec.Rules[0].HTTP.Paths).To(HaveLen(1))
 			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/"))
-			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Name).To(Equal(resourceName))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Name).To(Equal(resourceName + "-service"))
 		})
 
 		It("should create a custom Ingress when network configuration is provided", func() {
@@ -690,10 +659,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
 			By("Reconciling the resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
+			controllerReconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: clusterScopedName,
 			})
@@ -701,7 +667,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 			By("Verifying that an Ingress is created with custom configuration")
 			ingress := &networkingv1.Ingress{}
-			ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
+			ingressName := types.NamespacedName{Name: resourceName + "-ingress", Namespace: getOperatorNamespace()}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, ingressName, ingress)
 			}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
@@ -731,10 +697,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
 			By("Reconciling the resource")
-			controllerReconciler := &ScalityUIReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
+			controllerReconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: clusterScopedName,
 			})
@@ -742,7 +705,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 			By("Verifying the Ingress routes traffic to the root path")
 			ingress := &networkingv1.Ingress{}
-			ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
+			ingressName := types.NamespacedName{Name: resourceName + "-ingress", Namespace: getOperatorNamespace()}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, ingressName, ingress)
 			}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
@@ -796,11 +759,7 @@ var _ = Describe("ScalityUI Status Management", func() {
 		Describe("Status Initialization", func() {
 			It("should initialize status with appropriate phase and conditions", func() {
 				By("Reconciling the ScalityUI resource")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
@@ -838,11 +797,7 @@ var _ = Describe("ScalityUI Status Management", func() {
 		Describe("Status Updates During Resource Creation", func() {
 			It("should update status as resources are created successfully", func() {
 				By("Reconciling the ScalityUI resource")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
@@ -850,21 +805,21 @@ var _ = Describe("ScalityUI Status Management", func() {
 				By("Verifying all resources are created")
 				// Verify Deployment exists
 				deployment := &appsv1.Deployment{}
-				deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+				deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
 				Eventually(func() error {
 					return k8sClient.Get(ctx, deploymentName, deployment)
 				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 				// Verify Service exists
 				service := &corev1.Service{}
-				serviceName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+				serviceName := types.NamespacedName{Name: uiAppName + "-service", Namespace: getOperatorNamespace()}
 				Eventually(func() error {
 					return k8sClient.Get(ctx, serviceName, service)
 				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 				// Verify Ingress exists
 				ingress := &networkingv1.Ingress{}
-				ingressName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+				ingressName := types.NamespacedName{Name: uiAppName + "-ingress", Namespace: getOperatorNamespace()}
 				Eventually(func() error {
 					return k8sClient.Get(ctx, ingressName, ingress)
 				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
@@ -895,18 +850,14 @@ var _ = Describe("ScalityUI Status Management", func() {
 		Describe("Status Condition Transitions", func() {
 			It("should properly transition conditions based on resource state", func() {
 				By("Creating a ScalityUI and reconciling")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Simulating deployment readiness by updating deployment status")
 				deployment := &appsv1.Deployment{}
-				deploymentName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+				deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
 				Eventually(func() error {
 					return k8sClient.Get(ctx, deploymentName, deployment)
 				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
@@ -966,11 +917,7 @@ var _ = Describe("ScalityUI Status Management", func() {
 				}()
 
 				By("Reconciling the invalid resource")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 
 				invalidName := types.NamespacedName{Name: "test-ui-invalid"}
 				result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: invalidName})
@@ -1009,11 +956,7 @@ var _ = Describe("ScalityUI Status Management", func() {
 				}()
 
 				By("Reconciling the valid resource")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 
 				validName := types.NamespacedName{Name: "test-ui-partial-success"}
 				result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: validName})
@@ -1051,11 +994,7 @@ var _ = Describe("ScalityUI Status Management", func() {
 		Describe("Phase Management", func() {
 			It("should properly set and update the phase field", func() {
 				By("Reconciling a ScalityUI resource")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
@@ -1089,11 +1028,7 @@ var _ = Describe("ScalityUI Status Management", func() {
 		Describe("Status Persistence", func() {
 			It("should persist status updates across reconciliation cycles", func() {
 				By("Performing initial reconciliation")
-				reconciler := &ScalityUIReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
-					Log:    GinkgoLogr,
-				}
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
 
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
 				Expect(err).NotTo(HaveOccurred())
@@ -1185,19 +1120,19 @@ func cleanupTestResources(ctx context.Context, clusterScopedName types.Namespace
 	}
 
 	deployment := &appsv1.Deployment{}
-	deploymentName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
+	deploymentName := types.NamespacedName{Name: resourceName + "-deployment", Namespace: getOperatorNamespace()}
 	if err := k8sClient.Get(ctx, deploymentName, deployment); err == nil {
 		Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 	}
 
 	service := &corev1.Service{}
-	serviceName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
+	serviceName := types.NamespacedName{Name: resourceName + "-service", Namespace: getOperatorNamespace()}
 	if err := k8sClient.Get(ctx, serviceName, service); err == nil {
 		Expect(k8sClient.Delete(ctx, service)).To(Succeed())
 	}
 
 	ingress := &networkingv1.Ingress{}
-	ingressName := types.NamespacedName{Name: resourceName, Namespace: getOperatorNamespace()}
+	ingressName := types.NamespacedName{Name: resourceName + "-ingress", Namespace: getOperatorNamespace()}
 	if err := k8sClient.Get(ctx, ingressName, ingress); err == nil {
 		Expect(k8sClient.Delete(ctx, ingress)).To(Succeed())
 	}
@@ -1228,7 +1163,7 @@ func verifyUIApplicationConfiguration(ctx context.Context, appName, expectedProd
 func verifyUIApplicationService(ctx context.Context, appName string) {
 	service := &corev1.Service{}
 	Eventually(func() error {
-		return k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, service)
+		return k8sClient.Get(ctx, types.NamespacedName{Name: appName + "-service", Namespace: getOperatorNamespace()}, service)
 	}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 	Expect(service.Spec.Selector).To(HaveKeyWithValue("app", appName))
@@ -1247,13 +1182,13 @@ func verifyResourceOwnership(ctx context.Context, appName string, ownerUID types
 
 	// Verify Deployment ownership
 	deployment := &appsv1.Deployment{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, deployment)).To(Succeed())
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName + "-deployment", Namespace: getOperatorNamespace()}, deployment)).To(Succeed())
 	Expect(deployment.OwnerReferences).NotTo(BeEmpty())
 	Expect(deployment.OwnerReferences[0].UID).To(Equal(ownerUID))
 
 	// Verify Service ownership
 	service := &corev1.Service{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, service)).To(Succeed())
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appName + "-service", Namespace: getOperatorNamespace()}, service)).To(Succeed())
 	Expect(service.OwnerReferences).NotTo(BeEmpty())
 	Expect(service.OwnerReferences[0].UID).To(Equal(ownerUID))
 }
@@ -1327,7 +1262,7 @@ func verifyUserCustomizationOptions(ctx context.Context, appName string) {
 func verifyApplicationVersion(ctx context.Context, appName, expectedImage string) {
 	deployment := &appsv1.Deployment{}
 	Eventually(func() string {
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: appName, Namespace: getOperatorNamespace()}, deployment)
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: appName + "-deployment", Namespace: getOperatorNamespace()}, deployment)
 		if err != nil {
 			return ""
 		}

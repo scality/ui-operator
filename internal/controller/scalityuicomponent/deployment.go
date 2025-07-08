@@ -1,30 +1,13 @@
 package scalityuicomponent
 
 import (
-	"strings"
-
 	"github.com/scality/reconciler-framework/reconciler"
 	"github.com/scality/reconciler-framework/resources"
+	"github.com/scality/ui-operator/internal/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 )
-
-func parseImageName(imageStr string) string {
-	lastColonIndex := strings.LastIndex(imageStr, ":")
-	if lastColonIndex == -1 {
-		return imageStr
-	}
-	return imageStr[:lastColonIndex]
-}
-
-func parseImageTag(imageStr string) string {
-	lastColonIndex := strings.LastIndex(imageStr, ":")
-	if lastColonIndex == -1 {
-		return "latest"
-	}
-	return imageStr[lastColonIndex+1:]
-}
 
 // newDeploymentReducer creates a StateReducer for managing the deployment using the framework
 func newDeploymentReducer(r *ScalityUIComponentReconciler) StateReducer {
@@ -60,8 +43,8 @@ func newScalityUIComponentDeploymentReconciler(cr ScalityUIComponent, currentSta
 				Containers: []resources.GenericContainer{
 					{
 						Name:  cr.Name,
-						Image: parseImageName(cr.Spec.Image),
-						Tag:   parseImageTag(cr.Spec.Image),
+						Image: utils.ParseImageName(cr.Spec.Image),
+						Tag:   utils.ParseImageTag(cr.Spec.Image),
 						Ports: []corev1.ContainerPort{},
 						Env: func() ([]corev1.EnvVar, error) {
 							return []corev1.EnvVar{}, nil

@@ -278,7 +278,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			By("Verifying that the mock was called with correct parameters")
 			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
 			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
-			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
+			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName + "-service"))
 			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
 		})
 
@@ -339,7 +339,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			By("Verifying that the mock was called with correct parameters")
 			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
 			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
-			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
+			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName + "-service"))
 			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
 		})
 
@@ -388,7 +388,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			By("Verifying that the mock was called with correct parameters")
 			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
 			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
-			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
+			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName + "-service"))
 			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
 		})
 
