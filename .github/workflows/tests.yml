@@ -10,7 +10,7 @@ env:
   GO_VERSION: "1.24.3"
 
 jobs:
-  unit-tests:
+  test:
     runs-on: ubuntu-latest
 
     steps:
