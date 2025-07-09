@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Run unit tests
+      - name: Run tests
         run: make test
 
   build:
