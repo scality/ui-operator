@@ -37,12 +37,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
-	"github.com/scality/ui-operator/internal/controller"
 
 	// +kubebuilder:scaffold:imports
 
 	"github.com/scality/ui-operator/internal/controller/scalityui"
 	"github.com/scality/ui-operator/internal/controller/scalityuicomponent"
+	scalityuicomponentexposer "github.com/scality/ui-operator/internal/controller/scalityuicomponentexposer"
 )
 
 var (
@@ -168,10 +168,10 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ScalityUIComponent")
 		os.Exit(1)
 	}
-	if err = (&controller.ScalityUIComponentExposerReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+	if err = scalityuicomponentexposer.NewScalityUIComponentExposerReconciler(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+	).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ScalityUIComponentExposer")
 		os.Exit(1)
 	}
