@@ -17,6 +17,19 @@ on:
         description: "A GitHub PAT with permissions to read the private repository."
         required: true
 
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version tag for the image (uses git commit SHA if not provided)
+        required: false
+        type: string
+
+      push-image:
+        description: "Set to true to push the image, false to only build it"
+        required: true
+        type: boolean
+        default: false
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -71,7 +84,7 @@ jobs:
           annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=${{ inputs.push-image }}
+          # outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=${{ inputs.push-image }}
           build-args: |
             GH_TOKEN=${{ secrets.GH_PAT }}
             PRIVATE_REPO_HOST=github.com/scality
