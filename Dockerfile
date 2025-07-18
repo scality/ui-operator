@@ -1,7 +1,7 @@
 # Build the manager binary
 FROM golang:1.24 AS builder
 
-ARG GH_TOKEN
+ARG GHI_TOKEN
 
 ARG PRIVATE_REPO_HOST=github.com/scality
 
@@ -12,8 +12,8 @@ WORKDIR /workspace
 
 RUN go env -w GOPRIVATE=${PRIVATE_REPO_HOST}
 
-RUN if [ -z "$GH_TOKEN" ]; then echo "GH_TOKEN is missing"; exit 1; fi && \
-    git config --global url."https://oauth2:${GH_TOKEN}@${PRIVATE_REPO_HOST}".insteadOf "https://${PRIVATE_REPO_HOST}"
+RUN if [ -z "$GHI_TOKEN" ]; then echo "GHI_TOKEN is missing"; exit 1; fi && \
+    git config --global url."https://oauth2:${GHI_TOKEN}@${PRIVATE_REPO_HOST}".insteadOf "https://${PRIVATE_REPO_HOST}"
 
 # Copy the Go Modules manifests
 COPY go.mod go.mod
