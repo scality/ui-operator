@@ -1,0 +1,66 @@
+name: release
+run-name: release ${{ github.event.release.tag_name }}
+
+on:
+  release:
+    types: [published]
+
+env:
+  GO_VERSION: "1.23.4"
+
+jobs:
+  precheck:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.parsetag.outputs.tag }}
+      prerelease: ${{ steps.parsetag.outputs.prerelease }}
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Check version tag
+        id: parsetag
+        run: |
+          if [[ ! "$TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-.*)?$ ]]; then
+            echo "Tag must be in semver format without 'v' prefix (e.g., 1.0.0, 2.1.0-rc1)"
+            exit 1
+          fi
+
+          TAG=${BASH_REMATCH[1]}${BASH_REMATCH[2]:-}
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # Detect prerelease tags (use GitHub's prerelease flag)
+          echo "prerelease=${{ github.event.release.prerelease }}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+
+  test:
+    runs-on: ubuntu-24.04
+    needs: [precheck]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Go with private modules
+        uses: ./.github/actions/setup-go-private
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          gh-token: ${{ secrets.GH_PAT }}
+
+      - name: Run tests
+        run: make test
+
+  build:
+    uses: ./.github/workflows/docker.yml
+    needs: [precheck]
+    with:
+      version: ${{ needs.precheck.outputs.tag }}
+      push-image: true
+    secrets:
+      GH_PAT: ${{ secrets.GH_PAT }}

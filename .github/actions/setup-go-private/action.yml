@@ -1,0 +1,26 @@
+name: "Setup Go with Private Modules"
+description: "Set up Go with authentication for private Scality modules"
+inputs:
+  go-version:
+    description: "Go version to install"
+    required: true
+  gh-token:
+    description: "GitHub token for private module access"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: true
+
+    - name: Authenticate for private Go modules
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+      run: |
+        git config --global url."https://oauth2:${GH_TOKEN}@github.com/scality".insteadOf "https://github.com/scality"
+        go env -w GOPRIVATE='github.com/scality'

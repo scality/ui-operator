@@ -84,7 +84,6 @@ jobs:
           annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=${{ inputs.push-image }}
           build-args: |
             GH_TOKEN=${{ secrets.GH_PAT }}
             PRIVATE_REPO_HOST=github.com/scality
