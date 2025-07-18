@@ -18,18 +18,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
+      - name: Setup Go with private modules
+        uses: ./.github/actions/setup-go-private
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Authenticate for private Go modules
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: |
-          git config --global url."https://oauth2:${GH_TOKEN}@github.com/scality".insteadOf "https://github.com/scality"
-          go env -w GOPRIVATE='github.com/scality'
+          gh-token: ${{ secrets.GH_PAT }}
 
       - name: Install dependencies
         run: go mod download
@@ -40,6 +33,6 @@ jobs:
   build:
     uses: ./.github/workflows/docker.yml
     with:
-      push-image: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
+      push-image: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     secrets:
       GH_PAT: ${{ secrets.GH_PAT }}
