@@ -98,6 +98,33 @@ help: ## Display this help.
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
+.PHONY: package-crds
+package-crds: manifests ## Package CRDs into a single YAML file
+	mkdir -p dist
+	@echo "# UI Operator CRDs - Version $(VERSION)" > dist/ui-operator-crds-$(VERSION).yaml
+	@echo "# Generated on $$(date)" >> dist/ui-operator-crds-$(VERSION).yaml
+	@if command -v yq >/dev/null 2>&1; then \
+		echo "Using yq to merge YAML files..."; \
+		yq eval-all 'select(. != null)' config/crd/bases/*.yaml >> dist/ui-operator-crds-$(VERSION).yaml; \
+	else \
+		echo "Using manual YAML concatenation with proper separators..."; \
+		first=true; \
+		for file in config/crd/bases/*.yaml; do \
+			if [ "$$first" = true ]; then \
+				first=false; \
+			else \
+				echo "---" >> dist/ui-operator-crds-$(VERSION).yaml; \
+			fi; \
+			echo "# Source: $$(basename $$file)" >> dist/ui-operator-crds-$(VERSION).yaml; \
+			if head -n1 "$$file" | grep -q "^---$$"; then \
+				tail -n +2 "$$file" >> dist/ui-operator-crds-$(VERSION).yaml; \
+			else \
+				cat "$$file" >> dist/ui-operator-crds-$(VERSION).yaml; \
+			fi; \
+			echo "" >> dist/ui-operator-crds-$(VERSION).yaml; \
+		done; \
+	fi
+
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
