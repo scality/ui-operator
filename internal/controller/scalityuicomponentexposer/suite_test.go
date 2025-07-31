@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	rckversion "github.com/scality/reconciler-framework/version"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,6 +41,9 @@ func TestScalityUIComponentExposerController(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+
+	// Set operator info for tests to avoid invalid label values
+	rckversion.SetOperatorInfo("ui-operator", "v0.0.0-test")
 
 	ctx, cancel = context.WithCancel(context.TODO())
 
