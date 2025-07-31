@@ -56,7 +56,6 @@ func newScalityUIComponentExposerIngressReconciler(cr ScalityUIComponentExposer,
 			Skip:            false, // Don't skip - we have networks config
 			ComponentClass:  "",
 			ServiceName:     component.Name, // Service name matches component name
-			ServicePort:     "80",
 			SubresourceType: "ingress",
 			IngressClass:    getIngressClassName(networksConfig),
 			Rules: func() ([]resources.IngressHostPath, error) {

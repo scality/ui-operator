@@ -18,6 +18,7 @@ import (
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 	"github.com/scality/ui-operator/internal/utils"
+	networkingv1 "k8s.io/api/networking/v1"
 )
 
 var _ = Describe("ScalityUIComponentExposer Controller", func() {
@@ -368,6 +369,31 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(depCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(depCondition.Reason).To(Equal("DependencyMissing"))
 			Expect(depCondition.Message).To(ContainSubstring("ScalityUI \"non-existent-ui\" not found"))
+		})
+
+		It("should reconcile ingress correctly", func() {
+			uiWithNetworks := createScalityUI("test-ui-ingress", &uiv1alpha1.UINetworks{
+				IngressClassName: "nginx",
+				Host:             "example.com",
+			})
+			component := createComponent("test-component-ingress", "/test-component")
+			updateComponentStatus(component, "/test-component")
+			exposer := createExposer("test-exposer-ingress", "test-ui-ingress", "test-component-ingress", nil, nil)
+
+			controllerReconciler := createReconciler()
+			_, err := reconcileExposer(controllerReconciler, "test-exposer-ingress")
+			Expect(err).NotTo(HaveOccurred())
+
+			ingress := &networkingv1.Ingress{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name: "test-exposer-ingress-test-exposer-ingress", Namespace: testNamespace,
+				}, ingress)
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
+
+			_ = k8sClient.Delete(ctx, exposer)
+			_ = k8sClient.Delete(ctx, component)
+			_ = k8sClient.Delete(ctx, uiWithNetworks)
 		})
 	})
 })
