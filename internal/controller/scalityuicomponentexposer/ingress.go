@@ -133,7 +133,7 @@ if ($request_uri ~ "^%s/\\.well-known/runtime-app-configuration(\\?.*)?$") {
 	return annotations
 }
 
-// NewReferenceResource overrides the framework's method to handle custom TLS configuration
+// NewReferenceResource overrides the framework's method to handle custom TLS configuration and correct service names
 func (r *scalityUIComponentExposerIngressReconciler) NewReferenceResource() (*networkingv1.Ingress, error) {
 	// Call the parent method to get the ingress
 	ingress, err := r.IngressReconciler.NewReferenceResource()
@@ -155,6 +155,18 @@ func (r *scalityUIComponentExposerIngressReconciler) NewReferenceResource() (*ne
 	// Set TLS configuration if provided in networks config
 	if ui.Spec.Networks != nil && len(ui.Spec.Networks.TLS) > 0 {
 		ingress.Spec.TLS = ui.Spec.Networks.TLS
+	}
+
+	for i := range ingress.Spec.Rules {
+		rule := &ingress.Spec.Rules[i]
+		if rule.HTTP != nil {
+			for j := range rule.HTTP.Paths {
+				path := &rule.HTTP.Paths[j]
+				if path.Backend.Service != nil {
+					path.Backend.Service.Name = r.ServiceName
+				}
+			}
+		}
 	}
 
 	return ingress, nil
