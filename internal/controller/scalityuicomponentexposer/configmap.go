@@ -4,121 +4,92 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/scality/reconciler-framework/reconciler"
-	"github.com/scality/reconciler-framework/resources"
+	"github.com/go-logr/logr"
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 	"github.com/scality/ui-operator/internal/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// newConfigMapReducer creates a StateReducer for managing ConfigMaps using the framework
+// newConfigMapReducer creates a StateReducer for ConfigMap reconciliation
 func newConfigMapReducer(r *ScalityUIComponentExposerReconciler) StateReducer {
-	return asStateReducer(r, newScalityUIComponentExposerConfigMapReconciler, "configmap")
-}
-
-// scalityUIComponentExposerConfigMapReconciler implements the framework's ResourceReconciler for ConfigMaps
-type scalityUIComponentExposerConfigMapReconciler struct {
-	resources.ResourceReconciler[ScalityUIComponentExposer, State, *corev1.ConfigMap]
-	component *uiv1alpha1.ScalityUIComponent
-	ui        *uiv1alpha1.ScalityUI
-}
-
-var _ reconciler.ResourceReconciler[*corev1.ConfigMap] = &scalityUIComponentExposerConfigMapReconciler{}
-
-func newScalityUIComponentExposerConfigMapReconciler(cr ScalityUIComponentExposer, currentState State) reconciler.ResourceReconciler[*corev1.ConfigMap] {
-	ctx := currentState.GetContext()
-
-	// Get dependencies directly
-	component, ui, err := validateAndFetchDependencies(ctx, cr, currentState, currentState.GetLog())
-	if err != nil {
-		// Return a reconciler that will skip processing
-		return &scalityUIComponentExposerConfigMapReconciler{
-			ResourceReconciler: resources.ResourceReconciler[ScalityUIComponentExposer, State, *corev1.ConfigMap]{
-				CR:              cr,
-				CurrentState:    currentState,
-				SubresourceType: "configmap",
-			},
-			// component and ui will be nil, indicating skip
-		}
-	}
-
-	return &scalityUIComponentExposerConfigMapReconciler{
-		ResourceReconciler: resources.ResourceReconciler[ScalityUIComponentExposer, State, *corev1.ConfigMap]{
-			CR:              cr,
-			CurrentState:    currentState,
-			SubresourceType: "configmap",
+	return StateReducer{
+		N: "configmap",
+		F: func(cr ScalityUIComponentExposer, state State, log logr.Logger) (ctrl.Result, error) {
+			return r.reconcileConfigMap(cr, state, log)
 		},
-		component: component,
-		ui:        ui,
 	}
 }
 
-// NewZeroResource returns a new zero-value ConfigMap
-func (r *scalityUIComponentExposerConfigMapReconciler) NewZeroResource() *corev1.ConfigMap {
-	return &corev1.ConfigMap{}
-}
+// reconcileConfigMap creates or updates the ConfigMap for a ScalityUIComponentExposer
+func (r *ScalityUIComponentExposerReconciler) reconcileConfigMap(
+	cr ScalityUIComponentExposer,
+	state State,
+	log logr.Logger,
+) (ctrl.Result, error) {
+	ctx := state.GetContext()
 
-// NewReferenceResource creates the desired ConfigMap state
-func (r *scalityUIComponentExposerConfigMapReconciler) NewReferenceResource() (*corev1.ConfigMap, error) {
-	// Skip if dependencies not available
-	if r.component == nil || r.ui == nil {
-		return nil, nil
+	// Get dependencies
+	component, ui, err := validateAndFetchDependencies(ctx, cr, state, log)
+	if err != nil {
+		log.Info("Skipping ConfigMap reconciliation due to missing dependencies", "error", err.Error())
+		return ctrl.Result{}, nil
 	}
 
-	// Use component name for ConfigMap name with suffix
-	configMapName := fmt.Sprintf("%s-%s", r.component.Name, configMapNameSuffix)
+	configMapName := fmt.Sprintf("%s-%s", component.Name, configMapNameSuffix)
 
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      configMapName,
-			Namespace: r.CR.GetNamespace(),
-			Labels:    r.getLabels(),
+			Namespace: cr.GetNamespace(),
 		},
 	}
 
-	return configMap, nil
-}
+	log.Info("Reconciling ConfigMap", "configMap", configMapName)
 
-// PreCreate is called before creating the ConfigMap
-func (r *scalityUIComponentExposerConfigMapReconciler) PreCreate(configMap *corev1.ConfigMap) (*corev1.ConfigMap, error) {
-	return r.prepareConfigMap(configMap)
-}
+	result, err := ctrl.CreateOrUpdate(ctx, state.GetKubeClient(), configMap, func() error {
+		// Add exposer-specific finalizer to the ConfigMap so it is only deleted when all exposers are gone
+		finalizerName := configMapFinalizerPrefix + cr.GetName()
+		if !controllerutil.ContainsFinalizer(configMap, finalizerName) {
+			controllerutil.AddFinalizer(configMap, finalizerName)
+		}
 
-// PreUpdate is called before updating the ConfigMap
-func (r *scalityUIComponentExposerConfigMapReconciler) PreUpdate(configMap *corev1.ConfigMap) (*corev1.ConfigMap, error) {
-	return r.prepareConfigMap(configMap)
-}
+		// Build and add the runtime configuration for this exposer
+		if err := r.updateConfigMapData(configMap, cr, ui, component); err != nil {
+			return err
+		}
 
-// prepareConfigMap applies all the business logic to the ConfigMap
-func (r *scalityUIComponentExposerConfigMapReconciler) prepareConfigMap(configMap *corev1.ConfigMap) (*corev1.ConfigMap, error) {
-	// Skip if dependencies not available
-	if r.component == nil || r.ui == nil {
-		return configMap, nil
+		return nil
+	})
+
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to create or update ConfigMap: %w", err)
 	}
 
-	// Add exposer-specific finalizer to the ConfigMap so it is only deleted when all exposers are gone
-	finalizerName := configMapFinalizerPrefix + r.CR.GetName()
-	if !controllerutil.ContainsFinalizer(configMap, finalizerName) {
-		controllerutil.AddFinalizer(configMap, finalizerName)
-	}
+	log.Info("Successfully reconciled ConfigMap",
+		"configMap", configMapName, "operation", result)
 
-	// Build and add the runtime configuration for this exposer
-	if err := r.updateConfigMapData(configMap); err != nil {
-		return nil, fmt.Errorf("failed to update ConfigMap data: %w", err)
-	}
+	// Set status condition
+	setStatusCondition(cr, conditionTypeConfigMapReady, metav1.ConditionTrue,
+		reasonReconcileSucceeded, "ConfigMap successfully created/updated")
 
-	return configMap, nil
+	return ctrl.Result{}, nil
 }
 
 // updateConfigMapData updates the ConfigMap data with the runtime configuration
-func (r *scalityUIComponentExposerConfigMapReconciler) updateConfigMapData(configMap *corev1.ConfigMap) error {
+func (r *ScalityUIComponentExposerReconciler) updateConfigMapData(
+	configMap *corev1.ConfigMap,
+	exposer ScalityUIComponentExposer,
+	ui *uiv1alpha1.ScalityUI,
+	component *uiv1alpha1.ScalityUIComponent,
+) error {
 	if configMap.Data == nil {
 		configMap.Data = make(map[string]string)
 	}
 
-	runtimeConfig, err := r.buildRuntimeConfiguration()
+	runtimeConfig, err := r.buildRuntimeConfiguration(exposer, ui, component)
 	if err != nil {
 		return fmt.Errorf("failed to build runtime configuration: %w", err)
 	}
@@ -128,22 +99,25 @@ func (r *scalityUIComponentExposerConfigMapReconciler) updateConfigMapData(confi
 		return fmt.Errorf("failed to marshal runtime configuration: %w", err)
 	}
 
-	// Use exposer name as the key in ConfigMap
-	configMap.Data[r.CR.GetName()] = string(configJSONBytes)
+	configMap.Data[exposer.GetName()] = string(configJSONBytes)
 	return nil
 }
 
 // buildRuntimeConfiguration builds the MicroAppRuntimeConfiguration struct
-func (r *scalityUIComponentExposerConfigMapReconciler) buildRuntimeConfiguration() (MicroAppRuntimeConfiguration, error) {
-	authConfig, err := utils.BuildAuthConfig(r.CR.Spec.Auth)
+func (r *ScalityUIComponentExposerReconciler) buildRuntimeConfiguration(
+	exposer ScalityUIComponentExposer,
+	ui *uiv1alpha1.ScalityUI,
+	component *uiv1alpha1.ScalityUIComponent,
+) (MicroAppRuntimeConfiguration, error) {
+	authConfig, err := utils.BuildAuthConfig(exposer.Spec.Auth)
 	if err != nil {
 		return MicroAppRuntimeConfiguration{}, fmt.Errorf("failed to build auth config: %w", err)
 	}
 
 	// Parse SelfConfiguration from RawExtension
 	var selfConfig map[string]interface{}
-	if r.CR.Spec.SelfConfiguration != nil && r.CR.Spec.SelfConfiguration.Raw != nil {
-		if err := json.Unmarshal(r.CR.Spec.SelfConfiguration.Raw, &selfConfig); err != nil {
+	if exposer.Spec.SelfConfiguration != nil && exposer.Spec.SelfConfiguration.Raw != nil {
+		if err := json.Unmarshal(exposer.Spec.SelfConfiguration.Raw, &selfConfig); err != nil {
 			return MicroAppRuntimeConfiguration{}, fmt.Errorf("failed to unmarshal self configuration: %w", err)
 		}
 	}
@@ -152,77 +126,15 @@ func (r *scalityUIComponentExposerConfigMapReconciler) buildRuntimeConfiguration
 		Kind:       runtimeConfigKind,
 		APIVersion: runtimeConfigAPIVersion,
 		Metadata: MicroAppRuntimeConfigurationMetadata{
-			Kind: r.component.Status.Kind,
-			Name: r.component.Name,
+			Kind: component.Status.Kind,
+			Name: component.Name,
 		},
 		Spec: MicroAppRuntimeConfigurationSpec{
-			ScalityUI:          r.ui.Name,
-			ScalityUIComponent: r.component.Name,
-			AppHistoryBasePath: r.CR.Spec.AppHistoryBasePath,
+			ScalityUI:          ui.Name,
+			ScalityUIComponent: component.Name,
+			AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
 			Auth:               authConfig,
 			SelfConfiguration:  selfConfig,
 		},
 	}, nil
-}
-
-// getLabels returns labels for the ConfigMap
-func (r *scalityUIComponentExposerConfigMapReconciler) getLabels() map[string]string {
-	return map[string]string{
-		"app":                          r.CR.GetName(),
-		"app.kubernetes.io/name":       r.CR.GetName(),
-		"app.kubernetes.io/component":  "configmap",
-		"app.kubernetes.io/part-of":    "ui-operator",
-		"app.kubernetes.io/managed-by": "ui-operator",
-		"ui.scality.com/exposer":       r.CR.GetName(),
-		"ui.scality.com/component":     r.CR.Spec.ScalityUIComponent,
-		"ui.scality.com/ui":            r.CR.Spec.ScalityUI,
-	}
-}
-
-// Dependencies returns the list of dependencies for this reconciler
-func (r *scalityUIComponentExposerConfigMapReconciler) Dependencies() []string {
-	return []string{} // Dependencies are handled in the constructor
-}
-
-// AsHashable returns a hashable representation for comparison
-func (r *scalityUIComponentExposerConfigMapReconciler) AsHashable(configMap *corev1.ConfigMap) interface{} {
-	if configMap == nil {
-		return nil
-	}
-
-	return map[string]interface{}{
-		"name":      configMap.Name,
-		"namespace": configMap.Namespace,
-		"data":      configMap.Data,
-		"labels":    configMap.Labels,
-	}
-}
-
-// IsNil checks if the ConfigMap is nil
-func (r *scalityUIComponentExposerConfigMapReconciler) IsNil(configMap *corev1.ConfigMap) bool {
-	return configMap == nil
-}
-
-// PostReconcile is called after successful reconciliation
-func (r *scalityUIComponentExposerConfigMapReconciler) PostReconcile(configMap *corev1.ConfigMap) {
-	// Set status condition for successful ConfigMap reconciliation
-	setStatusCondition(r.CR, conditionTypeConfigMapReady, metav1.ConditionTrue,
-		reasonReconcileSucceeded, "ConfigMap successfully created/updated")
-}
-
-// Validate performs validation
-func (r *scalityUIComponentExposerConfigMapReconciler) Validate() error {
-	// Skip validation if dependencies not available
-	if r.component == nil || r.ui == nil {
-		return fmt.Errorf("dependencies not available")
-	}
-
-	// Validate auth configuration if present
-	if r.CR.Spec.Auth != nil {
-		if err := utils.ValidateAuthConfig(r.CR.Spec.Auth); err != nil {
-			return fmt.Errorf("invalid auth configuration: %w", err)
-		}
-	}
-
-	return nil
 }

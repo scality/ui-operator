@@ -67,14 +67,14 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Name:      resourceName,
 			Namespace: testNamespace,
 		}
-		// Framework creates deployment with name {resourceName}-deployment
+		// Deployment has the same name as the resource
 		deploymentNamespacedName := types.NamespacedName{
-			Name:      resourceName + "-deployment",
+			Name:      resourceName,
 			Namespace: testNamespace,
 		}
-		// Framework creates service with name {resourceName}-service
+		// Service has the same name as the resource
 		serviceNamespacedName := types.NamespacedName{
-			Name:      resourceName + "-service",
+			Name:      resourceName,
 			Namespace: testNamespace,
 		}
 		scalityuicomponent := &uiv1alpha1.ScalityUIComponent{}
@@ -109,6 +109,21 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := NewScalityUIComponentReconciler(k8sClient, k8sClient.Scheme())
+
+			// Setup mock config fetcher with valid JSON
+			mockFetcher := &MockConfigFetcher{
+				ConfigContent: `{
+					"kind": "UIModule", 
+					"apiVersion": "v1alpha1", 
+					"metadata": {"kind": "TestKind"}, 
+					"spec": {
+						"remoteEntryPath": "/remoteEntry.js", 
+						"publicPath": "/test-public/", 
+						"version": "1.2.3"
+					}
+				}`,
+			}
+			controllerReconciler.ConfigFetcher = mockFetcher
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
@@ -278,7 +293,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			By("Verifying that the mock was called with correct parameters")
 			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
 			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
-			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName + "-service"))
+			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
 			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
 		})
 
@@ -337,9 +352,9 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond.Message).To(Equal("Successfully fetched and applied UI component configuration"))
 
 			By("Verifying that the mock was called with correct parameters")
-			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1)) // Configuration fetched once, then skipped on subsequent reconciles
 			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
-			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName + "-service"))
+			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
 			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
 		})
 
@@ -386,9 +401,9 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond.Message).To(ContainSubstring("Failed to parse configuration"))
 
 			By("Verifying that the mock was called with correct parameters")
-			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2)) // Parse failures retry on subsequent reconciles
 			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
-			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName + "-service"))
+			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
 			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
 		})
 
