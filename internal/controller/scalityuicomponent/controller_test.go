@@ -118,9 +118,9 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 					"metadata": {"kind": "TestKind"}, 
 					"spec": {
 						"remoteEntryPath": "/remoteEntry.js", 
-						"publicPath": "/test-public/", 
 						"version": "1.2.3"
-					}
+					},
+					"publicPath": "/test-public/"
 				}`,
 			}
 			controllerReconciler.ConfigFetcher = mockFetcher
@@ -307,9 +307,9 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 					"metadata": {"kind": "TestKind"}, 
 					"spec": {
 						"remoteEntryPath": "/remoteEntry.js", 
-						"publicPath": "/test-public/", 
 						"version": "1.2.3"
-					}
+					},
+					"publicPath": "/test-public/"
 				}`,
 			}
 

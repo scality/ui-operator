@@ -64,7 +64,7 @@ func newScalityUIComponentExposerIngressReconciler(cr ScalityUIComponentExposer,
 			AutoGenerateTLS: false, // We'll handle TLS manually if needed
 			SkipTLS:         shouldSkipTLS(networksConfig),
 			ComputeName: func(subresourceType string, componentClass string) string {
-				return cr.Name // Use exposer name as ingress name
+				return subresourceType
 			},
 			Annotations: getIngressAnnotations(networksConfig, path, cr.Name),
 		},
@@ -144,6 +144,8 @@ func (r *scalityUIComponentExposerIngressReconciler) NewReferenceResource() (*ne
 	if ingress == nil {
 		return nil, nil
 	}
+
+	ingress.Name = r.ServiceName
 
 	// Get dependencies to configure TLS
 	ctx := r.CurrentState.GetContext()

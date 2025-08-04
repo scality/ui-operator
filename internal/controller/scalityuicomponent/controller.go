@@ -30,6 +30,7 @@ type MicroAppConfig struct {
 	ApiVersion string     `json:"apiVersion"`
 	Metadata   ConfigMeta `json:"metadata"`
 	Spec       ConfigSpec `json:"spec"`
+	PublicPath string     `json:"publicPath"`
 }
 
 // ConfigMeta represents the metadata section of the micro-app-configuration
@@ -40,7 +41,6 @@ type ConfigMeta struct {
 // ConfigSpec represents the spec section of the micro-app-configuration
 type ConfigSpec struct {
 	RemoteEntryPath string `json:"remoteEntryPath"`
-	PublicPath      string `json:"publicPath"`
 	Version         string `json:"version"`
 }
 
@@ -324,7 +324,7 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 
 	// Update status with configuration details
 	scalityUIComponent.Status.Kind = config.Metadata.Kind
-	scalityUIComponent.Status.PublicPath = config.Spec.PublicPath
+	scalityUIComponent.Status.PublicPath = config.PublicPath
 	scalityUIComponent.Status.Version = config.Spec.Version
 
 	// Set ConfigurationRetrieved=True condition
@@ -343,7 +343,7 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 
 	logger.Info("Successfully updated ScalityUIComponent status",
 		"kind", config.Metadata.Kind,
-		"publicPath", config.Spec.PublicPath,
+		"publicPath", config.PublicPath,
 		"version", config.Spec.Version)
 
 	return ctrl.Result{}, nil

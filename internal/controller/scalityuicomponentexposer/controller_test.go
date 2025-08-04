@@ -387,7 +387,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			ingress := &networkingv1.Ingress{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
-					Name: "test-exposer-ingress-test-exposer-ingress", Namespace: testNamespace,
+					Name: "test-component-ingress", Namespace: testNamespace,
 				}, ingress)
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
