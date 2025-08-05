@@ -1,6 +1,7 @@
 package scalityui
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 
@@ -73,6 +74,10 @@ func newDeployedAppsConfigMapReducer(r *ScalityUIReconciler, cr ScalityUI, curre
 				return reconcile.Result{}, fmt.Errorf("failed to marshal deployed UI apps: %w", err)
 			}
 
+			h := sha256.New()
+			h.Write(deployedAppsJSON)
+			deployedAppsHash := fmt.Sprintf("%x", h.Sum(nil))
+
 			result, err := controllerutil.CreateOrUpdate(ctx, currentState.GetKubeClient(), configMap, func() error {
 				if err := controllerutil.SetControllerReference(cr, configMap, r.Scheme); err != nil {
 					return fmt.Errorf("failed to set controller reference: %w", err)
@@ -82,6 +87,12 @@ func newDeployedAppsConfigMapReducer(r *ScalityUIReconciler, cr ScalityUI, curre
 					configMap.Data = make(map[string]string)
 				}
 				configMap.Data[deployedUIAppsKey] = string(deployedAppsJSON)
+
+				if configMap.Annotations == nil {
+					configMap.Annotations = make(map[string]string)
+				}
+				configMap.Annotations["scality.com/deployed-apps-hash"] = deployedAppsHash
+
 				return nil
 			})
 

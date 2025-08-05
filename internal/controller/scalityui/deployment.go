@@ -1,6 +1,9 @@
 package scalityui
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+
 	"github.com/scality/reconciler-framework/reconciler"
 	"github.com/scality/reconciler-framework/resources"
 	"github.com/scality/ui-operator/internal/utils"
@@ -154,13 +157,41 @@ func newScalityUIDeploymentReconciler(cr ScalityUI, currentState State) reconcil
 						// Get config hash from ConfigMap if available
 						ctx := currentState.GetContext()
 						configMap := &corev1.ConfigMap{}
+						var configHash string
 						if err := currentState.GetKubeClient().Get(ctx, client.ObjectKey{
 							Name:      cr.Name,
 							Namespace: getOperatorNamespace(),
 						}, configMap); err == nil {
 							if hash, exists := configMap.Annotations["scality.com/config-hash"]; exists {
-								podTemplate.Annotations["scality.com/config-hash"] = hash
+								configHash = hash
 							}
+						}
+
+						// Get deployed-apps hash from deployed-ui-apps ConfigMap
+						deployedAppsConfigMap := &corev1.ConfigMap{}
+						var deployedAppsHash string
+						if err := currentState.GetKubeClient().Get(ctx, client.ObjectKey{
+							Name:      cr.Name + "-deployed-ui-apps",
+							Namespace: getOperatorNamespace(),
+						}, deployedAppsConfigMap); err == nil {
+							if hash, exists := deployedAppsConfigMap.Annotations["scality.com/deployed-apps-hash"]; exists {
+								deployedAppsHash = hash
+							}
+						}
+
+						// Combine both hashes to trigger rolling update when either changes
+						if configHash != "" && deployedAppsHash != "" {
+							// Concatenate non-empty hashes with a separator and hash the result
+							combined := ""
+							if configHash != "" {
+								combined += "config:" + configHash + ";"
+							}
+							if deployedAppsHash != "" {
+								combined += "apps:" + deployedAppsHash + ";"
+							}
+							sum := sha256.Sum256([]byte(combined))
+							combinedHash := hex.EncodeToString(sum[:])
+							podTemplate.Annotations["scality.com/combined-hash"] = combinedHash
 						}
 					},
 				},
