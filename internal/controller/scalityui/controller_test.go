@@ -131,6 +131,64 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			})
 		})
 
+		Describe("Shell UI Pod Scheduling", func() {
+			It("should apply tolerations and nodeSelector from spec to deployment", func() {
+				By("Setting up a ScalityUI with tolerations and nodeSelector")
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
+
+				// Get current UI and add scheduling constraints
+				currentUI := &uiv1alpha1.ScalityUI{}
+				Expect(k8sClient.Get(ctx, clusterScopedName, currentUI)).To(Succeed())
+
+				currentUI.Spec.Tolerations = []corev1.Toleration{
+					{
+						Key:      "node-role.kubernetes.io/bootstrap",
+						Operator: "Exists",
+						Effect:   "NoSchedule",
+					},
+					{
+						Key:      "node-role.kubernetes.io/infra",
+						Operator: "Exists",
+						Effect:   "NoSchedule",
+					},
+				}
+
+				currentUI.Spec.NodeSelector = map[string]string{
+					"kubernetes.io/os": "linux",
+					"node-type":        "infrastructure",
+				}
+
+				Expect(k8sClient.Update(ctx, currentUI)).To(Succeed())
+
+				By("Reconciling the deployment with new scheduling constraints")
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying tolerations are applied to the deployment")
+				deployment := &appsv1.Deployment{}
+				deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, deploymentName, deployment)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				Expect(deployment.Spec.Template.Spec.Tolerations).To(HaveLen(2))
+
+				// Check first toleration
+				Expect(deployment.Spec.Template.Spec.Tolerations[0].Key).To(Equal("node-role.kubernetes.io/bootstrap"))
+				Expect(deployment.Spec.Template.Spec.Tolerations[0].Operator).To(Equal(corev1.TolerationOperator("Exists")))
+				Expect(deployment.Spec.Template.Spec.Tolerations[0].Effect).To(Equal(corev1.TaintEffect("NoSchedule")))
+
+				// Check second toleration
+				Expect(deployment.Spec.Template.Spec.Tolerations[1].Key).To(Equal("node-role.kubernetes.io/infra"))
+				Expect(deployment.Spec.Template.Spec.Tolerations[1].Operator).To(Equal(corev1.TolerationOperator("Exists")))
+				Expect(deployment.Spec.Template.Spec.Tolerations[1].Effect).To(Equal(corev1.TaintEffect("NoSchedule")))
+
+				By("Verifying nodeSelector is applied to the deployment")
+				Expect(deployment.Spec.Template.Spec.NodeSelector).To(HaveKeyWithValue("kubernetes.io/os", "linux"))
+				Expect(deployment.Spec.Template.Spec.NodeSelector).To(HaveKeyWithValue("node-type", "infrastructure"))
+			})
+		})
+
 		Describe("Shell UI Customization Features", func() {
 			It("should allow customization of shell branding and navigation", func() {
 				By("Deploying the Shell UI initially")

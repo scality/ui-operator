@@ -71,6 +71,12 @@ func newScalityUIDeploymentReconciler(cr ScalityUI, currentState State) reconcil
 							},
 						}
 					}
+
+					// Add tolerations from CR spec
+					if len(cr.Spec.Tolerations) > 0 {
+						spec.Tolerations = cr.Spec.Tolerations
+					}
+
 					return spec
 				},
 				Containers: []resources.GenericContainer{
@@ -192,6 +198,11 @@ func newScalityUIDeploymentReconciler(cr ScalityUI, currentState State) reconcil
 							sum := sha256.Sum256([]byte(combined))
 							combinedHash := hex.EncodeToString(sum[:])
 							podTemplate.Annotations["scality.com/combined-hash"] = combinedHash
+						}
+
+						// Add nodeSelector from CR spec
+						if len(cr.Spec.NodeSelector) > 0 {
+							podTemplate.Spec.NodeSelector = cr.Spec.NodeSelector
 						}
 					},
 				},

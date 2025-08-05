@@ -38,6 +38,12 @@ type ScalityUISpec struct {
 	Networks         *UINetworks                   `json:"networks,omitempty"`
 	Auth             *AuthConfig                   `json:"auth,omitempty"`
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// Tolerations allows the pods to be scheduled on nodes with matching taints
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// NodeSelector constrains the pods to run only on nodes with specific labels
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 // Themes defines the various themes supported by the UI.
