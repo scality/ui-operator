@@ -71,6 +71,12 @@ func newScalityUIDeploymentReconciler(cr ScalityUI, currentState State) reconcil
 							},
 						}
 					}
+
+					// Add tolerations from CR spec
+					if cr.Spec.Scheduling != nil && len(cr.Spec.Scheduling.Tolerations) > 0 {
+						spec.Tolerations = cr.Spec.Scheduling.Tolerations
+					}
+
 					return spec
 				},
 				Containers: []resources.GenericContainer{

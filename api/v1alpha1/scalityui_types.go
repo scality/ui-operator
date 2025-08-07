@@ -38,6 +38,9 @@ type ScalityUISpec struct {
 	Networks         *UINetworks                   `json:"networks,omitempty"`
 	Auth             *AuthConfig                   `json:"auth,omitempty"`
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// Scheduling defines pod scheduling constraints for the UI deployment
+	Scheduling *PodSchedulingSpec `json:"scheduling,omitempty"`
 }
 
 // Themes defines the various themes supported by the UI.
