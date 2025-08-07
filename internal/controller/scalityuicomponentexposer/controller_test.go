@@ -396,4 +396,53 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			_ = k8sClient.Delete(ctx, uiWithNetworks)
 		})
 	})
+
+	Context("When testing path handling", func() {
+		It("should preserve original path format without forcing trailing slashes", func() {
+			networks := &uiv1alpha1.UINetworks{
+				Host: "test.example.com",
+			}
+
+			By("Testing path without trailing slash - should remain as-is")
+			rules := getIngressRules(networks, "/test-component")
+			Expect(rules).To(HaveLen(1))
+			Expect(rules[0].Host).To(Equal("test.example.com"))
+			Expect(rules[0].Path).To(Equal("/test-component"))
+
+			By("Testing path with trailing slash - should remain as-is")
+			rules = getIngressRules(networks, "/test-component/")
+			Expect(rules).To(HaveLen(1))
+			Expect(rules[0].Path).To(Equal("/test-component/"))
+
+			By("Testing empty path - should default to root")
+			rules = getIngressRules(networks, "")
+			Expect(rules).To(HaveLen(1))
+			Expect(rules[0].Path).To(Equal("/"))
+
+			By("Testing root path - should remain as-is")
+			rules = getIngressRules(networks, "/")
+			Expect(rules).To(HaveLen(1))
+			Expect(rules[0].Path).To(Equal("/"))
+		})
+
+		It("should generate flexible nginx rewrite rules for runtime configuration", func() {
+			networks := &uiv1alpha1.UINetworks{
+				Host: "test.example.com",
+			}
+
+			By("Testing annotation generation for path without trailing slash")
+			annotations := getIngressAnnotations(networks, "/test-app", "test-exposer")
+			Expect(annotations).To(HaveKey("nginx.ingress.kubernetes.io/configuration-snippet"))
+
+			snippet := annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
+			// Should match both /test-app/.well-known/... and /test-app//.well-known/...
+			Expect(snippet).To(ContainSubstring("^/test-app/?/?"))
+
+			By("Testing annotation generation for path with trailing slash")
+			annotations = getIngressAnnotations(networks, "/test-app/", "test-exposer")
+			snippet = annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
+			// Should normalize to /test-app and still be flexible
+			Expect(snippet).To(ContainSubstring("^/test-app/?/?"))
+		})
+	})
 })
