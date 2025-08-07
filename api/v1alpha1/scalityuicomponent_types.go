@@ -40,6 +40,9 @@ type ScalityUIComponentSpec struct {
 	// ImagePullSecrets is a list of references to secrets in the same namespace to use for pulling any images
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// Scheduling defines pod scheduling constraints for the UI component deployment
+	Scheduling *PodSchedulingSpec `json:"scheduling,omitempty"`
 }
 
 // ScalityUIComponentStatus defines the observed state of ScalityUIComponent

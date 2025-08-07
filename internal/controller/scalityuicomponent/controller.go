@@ -189,6 +189,11 @@ func (r *ScalityUIComponentReconciler) Reconcile(ctx context.Context, req ctrl.R
 			}
 		}
 
+		// Apply tolerations from CR spec
+		if scalityUIComponent.Spec.Scheduling != nil && len(scalityUIComponent.Spec.Scheduling.Tolerations) > 0 {
+			deployment.Spec.Template.Spec.Tolerations = scalityUIComponent.Spec.Scheduling.Tolerations
+		}
+
 		return nil
 	})
 

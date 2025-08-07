@@ -198,6 +198,68 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(updatedDeployment.Spec.Template.Spec.ImagePullSecrets).To(BeEmpty())
 		})
 
+		It("should apply tolerations from scheduling spec to deployment", func() {
+			By("Reconciling the created resource initially")
+			controllerReconciler := NewScalityUIComponentReconciler(k8sClient, k8sClient.Scheme())
+			mockFetcher := &MockConfigFetcher{
+				ConfigContent: `{
+					"kind": "UIModule", 
+					"apiVersion": "v1alpha1", 
+					"metadata": {"kind": "TestKind"}, 
+					"spec": {
+						"remoteEntryPath": "/remoteEntry.js", 
+						"publicPath": "/test-public/", 
+						"version": "1.2.3"
+					}
+				}`,
+			}
+			controllerReconciler.ConfigFetcher = mockFetcher
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Adding scheduling constraints to the resource")
+			fetchedResource := &uiv1alpha1.ScalityUIComponent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, fetchedResource)).To(Succeed())
+
+			fetchedResource.Spec.Scheduling = &uiv1alpha1.PodSchedulingSpec{
+				Tolerations: []corev1.Toleration{
+					{
+						Key:      "node-role.kubernetes.io/bootstrap",
+						Operator: "Exists",
+						Effect:   "NoSchedule",
+					},
+					{
+						Key:      "node-role.kubernetes.io/infra",
+						Operator: "Exists",
+						Effect:   "NoSchedule",
+					},
+				},
+			}
+
+			Expect(k8sClient.Update(ctx, fetchedResource)).To(Succeed())
+
+			By("Reconciling again to apply scheduling constraints")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying tolerations are applied to the deployment")
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, deploymentNamespacedName, deployment)).To(Succeed())
+
+			Expect(deployment.Spec.Template.Spec.Tolerations).To(HaveLen(2))
+
+			// Check first toleration
+			Expect(deployment.Spec.Template.Spec.Tolerations[0].Key).To(Equal("node-role.kubernetes.io/bootstrap"))
+			Expect(deployment.Spec.Template.Spec.Tolerations[0].Operator).To(Equal(corev1.TolerationOperator("Exists")))
+			Expect(deployment.Spec.Template.Spec.Tolerations[0].Effect).To(Equal(corev1.TaintEffect("NoSchedule")))
+
+			// Check second toleration
+			Expect(deployment.Spec.Template.Spec.Tolerations[1].Key).To(Equal("node-role.kubernetes.io/infra"))
+			Expect(deployment.Spec.Template.Spec.Tolerations[1].Operator).To(Equal(corev1.TolerationOperator("Exists")))
+			Expect(deployment.Spec.Template.Spec.Tolerations[1].Effect).To(Equal(corev1.TaintEffect("NoSchedule")))
+		})
+
 		It("should requeue if Deployment is not ready", func() {
 			By("Reconciling the created resource")
 			mockFetcher := &MockConfigFetcher{}
