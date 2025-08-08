@@ -2,6 +2,7 @@ package scalityuicomponentexposer
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/scality/reconciler-framework/reconciler"
 	"github.com/scality/reconciler-framework/resources"
@@ -98,10 +99,17 @@ func getIngressClassName(networks *uiv1alpha1.UINetworks) string {
 
 // getIngressRules returns the ingress rules based on networks config
 func getIngressRules(networks *uiv1alpha1.UINetworks, path string) []resources.IngressHostPath {
+	// Use the path as-is, without forcing trailing slash
+	// Default to "/" if path is empty
+	ingressPath := path
+	if ingressPath == "" {
+		ingressPath = "/"
+	}
+
 	rules := []resources.IngressHostPath{
 		{
 			Host: networks.Host,
-			Path: path + "/",
+			Path: ingressPath,
 		},
 	}
 	return rules
@@ -123,11 +131,13 @@ func getIngressAnnotations(networks *uiv1alpha1.UINetworks, path string, exposer
 
 	// Add rewrite annotation for exposer runtime configuration path
 	// Use configuration-snippet for conditional rewriting
+	// Handle both paths with and without trailing slashes
+	normalizedPath := strings.TrimSuffix(path, "/")
 	configSnippet := fmt.Sprintf(`
-if ($request_uri ~ "^%s/\\.well-known/runtime-app-configuration(\\?.*)?$") {
+if ($request_uri ~ "^%s/?/?\\.well-known/runtime-app-configuration(\\?.*)?$") {
     rewrite ^.*$ /.well-known/%s/%s break;
 }
-`, path, configsSubdirectory, exposerName)
+`, normalizedPath, configsSubdirectory, exposerName)
 	annotations["nginx.ingress.kubernetes.io/configuration-snippet"] = configSnippet
 
 	return annotations
