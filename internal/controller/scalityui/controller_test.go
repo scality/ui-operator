@@ -685,7 +685,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			By("Verifying the Ingress has basic configuration")
 			Expect(ingress.Spec.Rules).To(HaveLen(1))
 			Expect(ingress.Spec.Rules[0].HTTP.Paths).To(HaveLen(1))
-			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/"))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/shell"))
 			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Name).To(Equal(resourceName + "-service"))
 		})
 
@@ -734,7 +734,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			Expect(ingress.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"]).To(Equal("false"))
 		})
 
-		It("should expose the application at the root path", func() {
+		It("should expose the shell-ui at the /shell path", func() {
 			By("Creating a ScalityUI resource")
 			resource := &uiv1alpha1.ScalityUI{
 				ObjectMeta: metav1.ObjectMeta{
@@ -762,7 +762,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 			By("Verifying the path configuration allows access to the application")
-			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/"))
+			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/shell"))
 			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].PathType).NotTo(BeNil())
 			Expect(*ingress.Spec.Rules[0].HTTP.Paths[0].PathType).To(Equal(networkingv1.PathTypePrefix))
 		})

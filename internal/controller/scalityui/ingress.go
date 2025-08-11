@@ -71,7 +71,7 @@ func getIngressRules(cr ScalityUI) []resources.IngressHostPath {
 	rules := []resources.IngressHostPath{
 		{
 			Host: getHostname(cr),
-			Path: "/",
+			Path: "/shell",
 		},
 	}
 	return rules
