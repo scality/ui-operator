@@ -200,8 +200,6 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(runtimeConfig.APIVersion).To(Equal("ui.scality.com/v1alpha1"))
 			Expect(runtimeConfig.Metadata.Kind).To(Equal(""))
 			Expect(runtimeConfig.Metadata.Name).To(Equal(componentName))
-			Expect(runtimeConfig.Spec.ScalityUI).To(Equal(uiName))
-			Expect(runtimeConfig.Spec.ScalityUIComponent).To(Equal(componentName))
 
 			// Verify no auth configuration since ScalityUI doesn't have auth and exposer doesn't specify auth
 			authConfig := runtimeConfig.Spec.Auth
@@ -217,22 +215,19 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(configMapCondition.Reason).To(Equal("ReconcileSucceeded"))
 		})
 
-		It("should handle complete custom auth configuration", func() {
-			By("Creating the custom resource with complete auth configuration")
+		It("should correctly add auth configuration from ScalityUI to runtime configuration", func() {
+			By("Creating ScalityUI with auth configuration")
 			providerLogout := true
-			exposer := &uiv1alpha1.ScalityUIComponentExposer{
+			uiWithAuth := &uiv1alpha1.ScalityUI{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "ui.scality.com/v1alpha1",
-					Kind:       "ScalityUIComponentExposer",
+					Kind:       "ScalityUI",
 				},
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      exposerName,
+					Name:      "test-ui-with-auth",
 					Namespace: testNamespace,
 				},
-				Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
-					ScalityUI:          uiName,
-					ScalityUIComponent: componentName,
-					AppHistoryBasePath: "/test-app",
+				Spec: uiv1alpha1.ScalityUISpec{
 					Auth: &uiv1alpha1.AuthConfig{
 						Kind:           "OIDC",
 						ProviderURL:    "https://auth.example.com",
@@ -242,24 +237,22 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 						Scopes:         "openid profile email",
 						ProviderLogout: &providerLogout,
 					},
-					SelfConfiguration: &runtime.RawExtension{
-						Raw: []byte(`{"url": "/test"}`),
-					},
 				},
 			}
-			Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+			Expect(k8sClient.Create(ctx, uiWithAuth)).To(Succeed())
 
-			By("Reconciling the created resource")
-			controllerReconciler := NewScalityUIComponentExposerReconcilerForTest(k8sClient, k8sClient.Scheme())
+			By("Creating component and exposer")
+			component := createComponent("test-component-auth", "/test-component")
+			exposer := createExposer("test-exposer-auth", "test-ui-with-auth", "test-component-auth", nil, nil)
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
+			By("Reconciling the exposer")
+			controllerReconciler := createReconciler()
+			_, err := reconcileExposer(controllerReconciler, "test-exposer-auth")
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying complete auth configuration in ConfigMap")
+			By("Verifying auth configuration in ConfigMap")
 			configMap := &corev1.ConfigMap{}
-			configMapName := componentName + "-runtime-app-configuration"
+			configMapName := "test-component-auth-runtime-app-configuration"
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
 					Name:      configMapName,
@@ -267,13 +260,15 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 				}, configMap)
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 
+			Expect(configMap.Data).To(HaveKey("test-exposer-auth"))
+
 			var runtimeConfig MicroAppRuntimeConfiguration
-			err = json.Unmarshal([]byte(configMap.Data[exposerName]), &runtimeConfig)
+			err = json.Unmarshal([]byte(configMap.Data["test-exposer-auth"]), &runtimeConfig)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(runtimeConfig.Metadata.Name).To(Equal(componentName))
-
+			By("Checking that auth configuration is correctly populated from ScalityUI")
 			authConfig := runtimeConfig.Spec.Auth
+			Expect(authConfig).NotTo(BeEmpty())
 			Expect(authConfig["kind"]).To(Equal("OIDC"))
 			Expect(authConfig["providerUrl"]).To(Equal("https://auth.example.com"))
 			Expect(authConfig["redirectUrl"]).To(Equal("/callback"))
@@ -282,8 +277,10 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			Expect(authConfig["scopes"]).To(Equal("openid profile email"))
 			Expect(authConfig["providerLogout"]).To(Equal(true))
 
-			selfConfig := runtimeConfig.Spec.SelfConfiguration
-			Expect(selfConfig["url"]).To(Equal("/test"))
+			By("Cleaning up")
+			_ = k8sClient.Delete(ctx, exposer)
+			_ = k8sClient.Delete(ctx, component)
+			_ = k8sClient.Delete(ctx, uiWithAuth)
 		})
 
 		It("should handle resource not found gracefully", func() {
@@ -387,7 +384,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			ingress := &networkingv1.Ingress{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
-					Name: "test-exposer-ingress-test-exposer-ingress", Namespace: testNamespace,
+					Name: "test-exposer-ingress", Namespace: testNamespace,
 				}, ingress)
 			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 

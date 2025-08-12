@@ -109,7 +109,7 @@ func (r *ScalityUIComponentExposerReconciler) buildRuntimeConfiguration(
 	ui *uiv1alpha1.ScalityUI,
 	component *uiv1alpha1.ScalityUIComponent,
 ) (MicroAppRuntimeConfiguration, error) {
-	authConfig, err := utils.BuildAuthConfig(exposer.Spec.Auth)
+	authConfig, err := utils.BuildAuthConfig(ui.Spec.Auth)
 	if err != nil {
 		return MicroAppRuntimeConfiguration{}, fmt.Errorf("failed to build auth config: %w", err)
 	}
@@ -130,11 +130,9 @@ func (r *ScalityUIComponentExposerReconciler) buildRuntimeConfiguration(
 			Name: component.Name,
 		},
 		Spec: MicroAppRuntimeConfigurationSpec{
-			ScalityUI:          ui.Name,
-			ScalityUIComponent: component.Name,
-			AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
 			Auth:               authConfig,
 			SelfConfiguration:  selfConfig,
+			AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
 		},
 	}, nil
 }
