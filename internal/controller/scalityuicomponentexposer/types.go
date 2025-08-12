@@ -16,8 +16,6 @@ type MicroAppRuntimeConfigurationMetadata struct {
 
 // MicroAppRuntimeConfigurationSpec represents the spec section
 type MicroAppRuntimeConfigurationSpec struct {
-	ScalityUI          string                 `json:"scalityUI"`
-	ScalityUIComponent string                 `json:"scalityUIComponent"`
 	AppHistoryBasePath string                 `json:"appHistoryBasePath,omitempty"`
 	Auth               map[string]interface{} `json:"auth,omitempty"`
 	SelfConfiguration  map[string]interface{} `json:"selfConfiguration,omitempty"`
