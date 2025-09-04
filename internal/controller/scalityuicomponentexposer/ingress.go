@@ -106,6 +106,9 @@ func getIngressRules(networks *uiv1alpha1.UINetworks, path string) []resources.I
 		ingressPath = "/"
 	}
 
+	// Add regex pattern for path matching
+	ingressPath = ingressPath + "(/?.*)"
+
 	rules := []resources.IngressHostPath{
 		{
 			Host: networks.Host,
@@ -139,6 +142,8 @@ if ($request_uri ~ "^%s/?/?\\.well-known/runtime-app-configuration(\\?.*)?$") {
 }
 `, normalizedPath, configsSubdirectory, exposerName)
 	annotations["nginx.ingress.kubernetes.io/configuration-snippet"] = configSnippet
+	annotations["nginx.ingress.kubernetes.io/rewrite-target"] = "/$1"
+	annotations["nginx.ingress.kubernetes.io/use-regex"] = "true"
 
 	return annotations
 }
