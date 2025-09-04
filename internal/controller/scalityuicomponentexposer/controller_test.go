@@ -395,31 +395,31 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 	})
 
 	Context("When testing path handling", func() {
-		It("should preserve original path format without forcing trailing slashes", func() {
+		It("should add regex pattern to paths for flexible matching", func() {
 			networks := &uiv1alpha1.UINetworks{
 				Host: "test.example.com",
 			}
 
-			By("Testing path without trailing slash - should remain as-is")
+			By("Testing path without trailing slash - should add regex pattern")
 			rules := getIngressRules(networks, "/test-component")
 			Expect(rules).To(HaveLen(1))
 			Expect(rules[0].Host).To(Equal("test.example.com"))
-			Expect(rules[0].Path).To(Equal("/test-component"))
+			Expect(rules[0].Path).To(Equal("/test-component(/?.*)"))
 
-			By("Testing path with trailing slash - should remain as-is")
+			By("Testing path with trailing slash - should add regex pattern")
 			rules = getIngressRules(networks, "/test-component/")
 			Expect(rules).To(HaveLen(1))
-			Expect(rules[0].Path).To(Equal("/test-component/"))
+			Expect(rules[0].Path).To(Equal("/test-component/(/?.*)"))
 
-			By("Testing empty path - should default to root")
+			By("Testing empty path - should default to root with regex pattern")
 			rules = getIngressRules(networks, "")
 			Expect(rules).To(HaveLen(1))
-			Expect(rules[0].Path).To(Equal("/"))
+			Expect(rules[0].Path).To(Equal("/(/?.*)"))
 
-			By("Testing root path - should remain as-is")
+			By("Testing root path - should add regex pattern")
 			rules = getIngressRules(networks, "/")
 			Expect(rules).To(HaveLen(1))
-			Expect(rules[0].Path).To(Equal("/"))
+			Expect(rules[0].Path).To(Equal("/(/?.*)"))
 		})
 
 		It("should generate flexible nginx rewrite rules for runtime configuration", func() {
@@ -430,16 +430,28 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			By("Testing annotation generation for path without trailing slash")
 			annotations := getIngressAnnotations(networks, "/test-app", "test-exposer")
 			Expect(annotations).To(HaveKey("nginx.ingress.kubernetes.io/configuration-snippet"))
+			Expect(annotations).To(HaveKey("nginx.ingress.kubernetes.io/rewrite-target"))
+			Expect(annotations).To(HaveKey("nginx.ingress.kubernetes.io/use-regex"))
 
 			snippet := annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
 			// Should match both /test-app/.well-known/... and /test-app//.well-known/...
 			Expect(snippet).To(ContainSubstring("^/test-app/?/?"))
 
+			Expect(annotations["nginx.ingress.kubernetes.io/rewrite-target"]).To(Equal("/$1"))
+			Expect(annotations["nginx.ingress.kubernetes.io/use-regex"]).To(Equal("true"))
+
 			By("Testing annotation generation for path with trailing slash")
 			annotations = getIngressAnnotations(networks, "/test-app/", "test-exposer")
+			Expect(annotations).To(HaveKey("nginx.ingress.kubernetes.io/configuration-snippet"))
+			Expect(annotations).To(HaveKey("nginx.ingress.kubernetes.io/rewrite-target"))
+			Expect(annotations).To(HaveKey("nginx.ingress.kubernetes.io/use-regex"))
+
 			snippet = annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
 			// Should normalize to /test-app and still be flexible
 			Expect(snippet).To(ContainSubstring("^/test-app/?/?"))
+
+			Expect(annotations["nginx.ingress.kubernetes.io/rewrite-target"]).To(Equal("/$1"))
+			Expect(annotations["nginx.ingress.kubernetes.io/use-regex"]).To(Equal("true"))
 		})
 	})
 })
