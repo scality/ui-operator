@@ -683,10 +683,17 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 			By("Verifying the Ingress has basic configuration")
-			Expect(ingress.Spec.Rules).To(HaveLen(1))
+			Expect(ingress.Spec.Rules).To(HaveLen(2))
+
+			// Check /shell path (first rule)
 			Expect(ingress.Spec.Rules[0].HTTP.Paths).To(HaveLen(1))
 			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/shell"))
 			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Name).To(Equal(resourceName + "-service"))
+
+			// Check / path (second rule)
+			Expect(ingress.Spec.Rules[1].HTTP.Paths).To(HaveLen(1))
+			Expect(ingress.Spec.Rules[1].HTTP.Paths[0].Path).To(Equal("/"))
+			Expect(ingress.Spec.Rules[1].HTTP.Paths[0].Backend.Service.Name).To(Equal(resourceName + "-service"))
 		})
 
 		It("should create a custom Ingress when network configuration is provided", func() {
@@ -726,8 +733,9 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			By("Verifying the Ingress has the specified host and class")
 			Expect(ingress.Spec.IngressClassName).NotTo(BeNil())
 			Expect(*ingress.Spec.IngressClassName).To(Equal("nginx"))
-			Expect(ingress.Spec.Rules).To(HaveLen(1))
+			Expect(ingress.Spec.Rules).To(HaveLen(2))
 			Expect(ingress.Spec.Rules[0].Host).To(Equal("test.example.com"))
+			Expect(ingress.Spec.Rules[1].Host).To(Equal("test.example.com"))
 
 			By("Verifying the Ingress has the specified annotations")
 			Expect(ingress.Annotations).To(HaveKey("nginx.ingress.kubernetes.io/ssl-redirect"))
@@ -762,9 +770,19 @@ var _ = Describe("ScalityUI Shell Features", func() {
 			}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
 
 			By("Verifying the path configuration allows access to the application")
+			Expect(ingress.Spec.Rules).To(HaveLen(2))
+
+			// Check /shell path (first rule)
+			Expect(ingress.Spec.Rules[0].HTTP.Paths).To(HaveLen(1))
 			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].Path).To(Equal("/shell"))
 			Expect(ingress.Spec.Rules[0].HTTP.Paths[0].PathType).NotTo(BeNil())
 			Expect(*ingress.Spec.Rules[0].HTTP.Paths[0].PathType).To(Equal(networkingv1.PathTypePrefix))
+
+			// Check / path (second rule)
+			Expect(ingress.Spec.Rules[1].HTTP.Paths).To(HaveLen(1))
+			Expect(ingress.Spec.Rules[1].HTTP.Paths[0].Path).To(Equal("/"))
+			Expect(ingress.Spec.Rules[1].HTTP.Paths[0].PathType).NotTo(BeNil())
+			Expect(*ingress.Spec.Rules[1].HTTP.Paths[0].PathType).To(Equal(networkingv1.PathTypePrefix))
 		})
 	})
 })
