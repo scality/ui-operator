@@ -271,14 +271,8 @@ func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Cont
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Check if configuration was already retrieved successfully
-	existingCond := meta.FindStatusCondition(scalityUIComponent.Status.Conditions, "ConfigurationRetrieved")
-	if existingCond != nil && existingCond.Status == metav1.ConditionTrue {
-		logger.Info("Configuration already retrieved successfully, skipping fetch")
-		return ctrl.Result{}, nil
-	}
-
-	// Fetch micro-app configuration
+	// Always fetch micro-app configuration to detect changes
+	// We'll compare with existing status to determine if configuration changed
 	configContent, err := r.fetchMicroAppConfig(ctx, scalityUIComponent.Namespace, scalityUIComponent.Name)
 	if err != nil {
 		logger.Error(err, "Failed to fetch micro-app configuration")
@@ -327,17 +321,37 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	// Check if this is the first time we're setting the configuration
+	oldPublicPath := scalityUIComponent.Status.PublicPath
+	isFirstConfiguration := oldPublicPath == ""
+	publicPathChanged := oldPublicPath != config.Spec.PublicPath
+
 	// Update status with configuration details
 	scalityUIComponent.Status.Kind = config.Metadata.Kind
 	scalityUIComponent.Status.PublicPath = config.Spec.PublicPath
 	scalityUIComponent.Status.Version = config.Spec.Version
 
-	// Set ConfigurationRetrieved=True condition
+	// Set appropriate condition message based on the scenario
+	var conditionMessage string
+	if isFirstConfiguration {
+		conditionMessage = "Successfully fetched and applied UI component configuration"
+		logger.Info("Successfully fetched initial configuration",
+			"publicPath", config.Spec.PublicPath,
+			"version", config.Spec.Version)
+	} else if publicPathChanged {
+		conditionMessage = fmt.Sprintf("PublicPath updated: %s -> %s", oldPublicPath, config.Spec.PublicPath)
+		logger.Info("PublicPath change detected",
+			"oldPath", oldPublicPath,
+			"newPath", config.Spec.PublicPath)
+	} else {
+		conditionMessage = "Configuration verified - no changes detected"
+	}
+
 	meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
 		Type:    "ConfigurationRetrieved",
 		Status:  metav1.ConditionTrue,
 		Reason:  "FetchSucceeded",
-		Message: "Successfully fetched and applied UI component configuration",
+		Message: conditionMessage,
 	})
 
 	// Update the status
@@ -351,7 +365,8 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 		"publicPath", config.Spec.PublicPath,
 		"version", config.Spec.Version)
 
-	return ctrl.Result{}, nil
+	// Schedule next configuration check after 1 minute to detect any changes
+	return ctrl.Result{RequeueAfter: time.Minute}, nil
 }
 
 func (r *ScalityUIComponentReconciler) fetchMicroAppConfig(ctx context.Context, namespace, serviceName string) (string, error) {
