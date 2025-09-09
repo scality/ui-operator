@@ -399,7 +399,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(reconcile.Result{}))
+			Expect(result.RequeueAfter).To(Equal(time.Minute)) // Now requeues every minute for periodic checks
 
 			updatedScalityUIComponent := &uiv1alpha1.ScalityUIComponent{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedScalityUIComponent)).To(Succeed())
@@ -411,10 +411,11 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal("FetchSucceeded"))
-			Expect(cond.Message).To(Equal("Successfully fetched and applied UI component configuration"))
+			// Second reconcile verifies configuration (first reconcile already set it)
+			Expect(cond.Message).To(Equal("Configuration verified - no changes detected"))
 
 			By("Verifying that the mock was called with correct parameters")
-			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1)) // Configuration fetched once, then skipped on subsequent reconciles
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2)) // Configuration fetched on both reconcile calls
 			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
 			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
 			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
@@ -463,10 +464,103 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond.Message).To(ContainSubstring("Failed to parse configuration"))
 
 			By("Verifying that the mock was called with correct parameters")
-			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2)) // Parse failures retry on subsequent reconciles
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2)) // Configuration fetched twice: once per reconcile call
 			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
 			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
 			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
+		})
+
+		It("should detect PublicPath changes and update condition message", func() {
+			By("Creating a mock config fetcher with initial configuration")
+			mockFetcher := &MockConfigFetcher{
+				ShouldFail: false,
+				ConfigContent: `{
+					"kind": "UIModule", 
+					"apiVersion": "v1alpha1", 
+					"metadata": {"kind": "TestKind"}, 
+					"spec": {
+						"remoteEntryPath": "/remoteEntry.js", 
+						"publicPath": "/initial-path/", 
+						"version": "1.0.0"
+					}
+				}`,
+			}
+
+			controllerReconciler := NewScalityUIComponentReconciler(k8sClient, k8sClient.Scheme())
+			controllerReconciler.ConfigFetcher = mockFetcher
+
+			By("Reconciling to set initial configuration")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error { return k8sClient.Get(ctx, deploymentNamespacedName, deployment) }, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			// Mark deployment as ready
+			deployment.Status.UpdatedReplicas = *deployment.Spec.Replicas
+			deployment.Status.Replicas = *deployment.Spec.Replicas
+			deployment.Status.ReadyReplicas = *deployment.Spec.Replicas
+			deployment.Status.AvailableReplicas = *deployment.Spec.Replicas
+			deployment.Status.Conditions = []appsv1.DeploymentCondition{
+				{
+					Type:   appsv1.DeploymentAvailable,
+					Status: corev1.ConditionTrue,
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Reconciling again to process initial configuration")
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			By("Verifying initial configuration status")
+			updatedScalityUIComponent := &uiv1alpha1.ScalityUIComponent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedScalityUIComponent)).To(Succeed())
+			Expect(updatedScalityUIComponent.Status.PublicPath).To(Equal("/initial-path/"))
+
+			cond := meta.FindStatusCondition(updatedScalityUIComponent.Status.Conditions, "ConfigurationRetrieved")
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			// Second reconcile verifies configuration (first reconcile already set it)
+			Expect(cond.Message).To(Equal("Configuration verified - no changes detected"))
+
+			By("Changing the PublicPath in mock config")
+			mockFetcher.ConfigContent = `{
+				"kind": "UIModule", 
+				"apiVersion": "v1alpha1", 
+				"metadata": {"kind": "TestKind"}, 
+				"spec": {
+					"remoteEntryPath": "/remoteEntry.js", 
+					"publicPath": "/changed-path/", 
+					"version": "1.0.0"
+				}
+			}`
+
+			By("Reconciling again to detect the change")
+			result, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			By("Verifying PublicPath change was detected")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedScalityUIComponent)).To(Succeed())
+			Expect(updatedScalityUIComponent.Status.PublicPath).To(Equal("/changed-path/"))
+
+			cond = meta.FindStatusCondition(updatedScalityUIComponent.Status.Conditions, "ConfigurationRetrieved")
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Message).To(Equal("PublicPath updated: /initial-path/ -> /changed-path/"))
+
+			By("Reconciling again with no changes to verify no-change message")
+			result, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedScalityUIComponent)).To(Succeed())
+			cond = meta.FindStatusCondition(updatedScalityUIComponent.Status.Conditions, "ConfigurationRetrieved")
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Message).To(Equal("Configuration verified - no changes detected"))
 		})
 
 		It("should preserve existing volumes and volume mounts during deployment update", func() {
