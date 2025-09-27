@@ -142,7 +142,7 @@ if ($request_uri ~ "^%s/?/?\\.well-known/runtime-app-configuration(\\?.*)?$") {
 }
 `, normalizedPath, configsSubdirectory, exposerName)
 	annotations["nginx.ingress.kubernetes.io/configuration-snippet"] = configSnippet
-	annotations["nginx.ingress.kubernetes.io/rewrite-target"] = "/$1"
+	annotations["nginx.ingress.kubernetes.io/rewrite-target"] = "$1"
 	annotations["nginx.ingress.kubernetes.io/use-regex"] = "true"
 
 	return annotations

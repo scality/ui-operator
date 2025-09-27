@@ -437,7 +437,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			// Should match both /test-app/.well-known/... and /test-app//.well-known/...
 			Expect(snippet).To(ContainSubstring("^/test-app/?/?"))
 
-			Expect(annotations["nginx.ingress.kubernetes.io/rewrite-target"]).To(Equal("/$1"))
+			Expect(annotations["nginx.ingress.kubernetes.io/rewrite-target"]).To(Equal("$1"))
 			Expect(annotations["nginx.ingress.kubernetes.io/use-regex"]).To(Equal("true"))
 
 			By("Testing annotation generation for path with trailing slash")
@@ -450,7 +450,7 @@ var _ = Describe("ScalityUIComponentExposer Controller", func() {
 			// Should normalize to /test-app and still be flexible
 			Expect(snippet).To(ContainSubstring("^/test-app/?/?"))
 
-			Expect(annotations["nginx.ingress.kubernetes.io/rewrite-target"]).To(Equal("/$1"))
+			Expect(annotations["nginx.ingress.kubernetes.io/rewrite-target"]).To(Equal("$1"))
 			Expect(annotations["nginx.ingress.kubernetes.io/use-regex"]).To(Equal("true"))
 		})
 	})
