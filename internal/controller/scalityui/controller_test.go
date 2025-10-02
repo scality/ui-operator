@@ -528,11 +528,7 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(config["discoveryUrl"]).To(Equal("/shell/deployed-ui-apps.json"))
 
 				By("Verifying default branding is not present")
-				Expect(config).NotTo(HaveKey("favicon"))
 				Expect(config).NotTo(HaveKey("logo"))
-				Expect(config).NotTo(HaveKey("canChangeTheme"))
-				Expect(config).NotTo(HaveKey("canChangeInstanceName"))
-				Expect(config).NotTo(HaveKey("canChangeLanguage"))
 
 				By("Verifying default navigation structure")
 				navbar := config["navbar"].(map[string]interface{})
@@ -543,6 +539,10 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				themes := config["themes"].(map[string]interface{})
 				lightTheme := themes["light"].(map[string]interface{})
 				darkTheme := themes["dark"].(map[string]interface{})
+				Expect(config["canChangeTheme"]).To(Equal(false))
+				Expect(config["canChangeInstanceName"]).To(Equal(false))
+				Expect(config["canChangeLanguage"]).To(Equal(false))
+				Expect(config["favicon"]).To(Equal("/favicon.ico"))
 
 				Expect(lightTheme["type"]).To(Equal("core-ui"))
 				Expect(lightTheme["name"]).To(Equal("artescaLight"))
@@ -585,12 +585,19 @@ var _ = Describe("ScalityUI Shell Features", func() {
 						},
 					},
 				}
+				customUIConfig := uiv1alpha1.UIConfig{
+					CanChangeTheme:        &[]bool{true}[0],
+					CanChangeInstanceName: &[]bool{true}[0],
+					CanChangeLanguage:     &[]bool{true}[0],
+					Favicon:               "/custom/favicon.ico",
+				}
 
 				testUI := &uiv1alpha1.ScalityUI{
 					Spec: uiv1alpha1.ScalityUISpec{
 						ProductName: "Enterprise Dashboard",
 						Navbar:      customNavbar,
 						Themes:      customThemes,
+						UIConfig:    &customUIConfig,
 					},
 				}
 
@@ -602,6 +609,12 @@ var _ = Describe("ScalityUI Shell Features", func() {
 
 				By("Verifying custom shell product configuration")
 				Expect(config["productName"]).To(Equal("Enterprise Dashboard"))
+
+				By("Verifying custom UI configuration")
+				Expect(config["canChangeTheme"]).To(Equal(true))
+				Expect(config["canChangeInstanceName"]).To(Equal(true))
+				Expect(config["canChangeLanguage"]).To(Equal(true))
+				Expect(config["favicon"]).To(Equal("/custom/favicon.ico"))
 
 				By("Verifying custom navigation structure")
 				navbar := config["navbar"].(map[string]interface{})

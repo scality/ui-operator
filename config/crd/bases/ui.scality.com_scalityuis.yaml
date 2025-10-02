@@ -1346,6 +1346,29 @@ spec:
                 - dark
                 - light
                 type: object
+              uiConfig:
+                description: UIConfig defines UI configuration and customization options
+                properties:
+                  canChangeInstanceName:
+                    default: false
+                    description: CanChangeInstanceName controls whether users can
+                      change the instance name
+                    type: boolean
+                  canChangeLanguage:
+                    default: false
+                    description: CanChangeLanguage controls whether users can change
+                      the UI language
+                    type: boolean
+                  canChangeTheme:
+                    default: false
+                    description: CanChangeTheme controls whether users can change
+                      the UI theme
+                    type: boolean
+                  favicon:
+                    default: /favicon.ico
+                    description: Favicon specifies the favicon for the UI
+                    type: string
+                type: object
             required:
             - image
             - productName

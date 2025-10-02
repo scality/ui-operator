@@ -53,6 +53,17 @@ func createConfigJSON(scalityui *uiscalitycomv1alpha1.ScalityUI) ([]byte, error)
 	// Basic fields
 	configOutput["productName"] = scalityui.Spec.ProductName
 	configOutput["discoveryUrl"] = "/shell/deployed-ui-apps.json"
+	if scalityui.Spec.UIConfig != nil {
+		configOutput["canChangeInstanceName"] = scalityui.Spec.UIConfig.CanChangeInstanceName
+		configOutput["canChangeLanguage"] = scalityui.Spec.UIConfig.CanChangeLanguage
+		configOutput["canChangeTheme"] = scalityui.Spec.UIConfig.CanChangeTheme
+		configOutput["favicon"] = scalityui.Spec.UIConfig.Favicon
+	} else {
+		configOutput["canChangeInstanceName"] = false
+		configOutput["canChangeLanguage"] = false
+		configOutput["canChangeTheme"] = false
+		configOutput["favicon"] = "/favicon.ico"
+	}
 
 	// Navbar configuration
 	navbarData := make(map[string]interface{})

@@ -37,6 +37,7 @@ type ScalityUISpec struct {
 	Navbar           Navbar                        `json:"navbar,omitempty"`
 	Networks         *UINetworks                   `json:"networks,omitempty"`
 	Auth             *AuthConfig                   `json:"auth,omitempty"`
+	UIConfig         *UIConfig                     `json:"uiConfig,omitempty"`
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
 	// Scheduling defines pod scheduling constraints for the UI deployment
@@ -158,6 +159,25 @@ type AuthConfig struct {
 	// ProviderLogout enables provider logout
 	// +kubebuilder:default=true
 	ProviderLogout *bool `json:"providerLogout,omitempty"`
+}
+
+// UIConfig defines UI configuration and customization options
+type UIConfig struct {
+	// CanChangeInstanceName controls whether users can change the instance name
+	// +kubebuilder:default=false
+	CanChangeInstanceName *bool `json:"canChangeInstanceName,omitempty"`
+
+	// CanChangeLanguage controls whether users can change the UI language
+	// +kubebuilder:default=false
+	CanChangeLanguage *bool `json:"canChangeLanguage,omitempty"`
+
+	// CanChangeTheme controls whether users can change the UI theme
+	// +kubebuilder:default=false
+	CanChangeTheme *bool `json:"canChangeTheme,omitempty"`
+
+	// Favicon specifies the favicon for the UI
+	// +kubebuilder:default="/favicon.ico"
+	Favicon string `json:"favicon,omitempty"`
 }
 
 // ScalityUIStatus defines the observed state of ScalityUI
