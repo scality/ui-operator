@@ -144,6 +144,9 @@ if ($request_uri ~ "^%s/?/?\\.well-known/runtime-app-configuration(\\?.*)?$") {
 	annotations["nginx.ingress.kubernetes.io/configuration-snippet"] = configSnippet
 	annotations["nginx.ingress.kubernetes.io/rewrite-target"] = "$1"
 	annotations["nginx.ingress.kubernetes.io/use-regex"] = "true"
+	annotations["nginx.ingress.kubernetes.io/proxy-body-size"] = "0m"
+	annotations["nginx.ingress.kubernetes.io/proxy-buffering"] = "off"
+	annotations["nginx.ingress.kubernetes.io/proxy-request-buffering"] = "off"
 
 	return annotations
 }
