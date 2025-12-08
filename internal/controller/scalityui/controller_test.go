@@ -507,6 +507,284 @@ var _ = Describe("ScalityUI Shell Features", func() {
 					},
 				})
 			})
+
+			It("should trigger deployment rolling update when deployed-ui-apps changes", func() {
+				By("Deploying the Shell UI initially")
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Capturing initial deployment hash annotation")
+				deployment := &appsv1.Deployment{}
+				deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, deploymentName, deployment)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				initialHash := deployment.Spec.Template.Annotations["scality.com/combined-hash"]
+
+				By("Creating test resources to update deployed-ui-apps")
+				testNamespace := "test-rollout-update"
+				ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}
+				Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+				defer k8sClient.Delete(ctx, ns)
+
+				component := &uiv1alpha1.ScalityUIComponent{
+					ObjectMeta: metav1.ObjectMeta{Name: "rollout-component", Namespace: testNamespace},
+					Spec:       uiv1alpha1.ScalityUIComponentSpec{Image: "test:2.0.0"},
+				}
+				Expect(k8sClient.Create(ctx, component)).To(Succeed())
+				component.Status = uiv1alpha1.ScalityUIComponentStatus{
+					Kind: "micro-app", PublicPath: "/apps/rollout-component", Version: "2.0.0",
+				}
+				component.Status.Conditions = []metav1.Condition{
+					{
+						Type:               "ConfigurationRetrieved",
+						Status:             metav1.ConditionTrue,
+						Reason:             "FetchSucceeded",
+						LastTransitionTime: metav1.Now(),
+					},
+				}
+				Expect(k8sClient.Status().Update(ctx, component)).To(Succeed())
+				defer k8sClient.Delete(ctx, component)
+
+				exposer := &uiv1alpha1.ScalityUIComponentExposer{
+					ObjectMeta: metav1.ObjectMeta{Name: "rollout-exposer", Namespace: testNamespace},
+					Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+						ScalityUI: uiAppName, ScalityUIComponent: "rollout-component", AppHistoryBasePath: "/rollout-app",
+					},
+				}
+				Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+				defer k8sClient.Delete(ctx, exposer)
+
+				By("Reconciling to trigger deployed-ui-apps update")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying deployment hash annotation changed to trigger rolling update")
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, deploymentName, deployment)
+					if err != nil {
+						return false
+					}
+					newHash := deployment.Spec.Template.Annotations["scality.com/combined-hash"]
+					return newHash != "" && newHash != initialHash
+				}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
+
+				By("Verifying deployed-ui-apps ConfigMap has the hash annotation")
+				deployedAppsConfigMap := &corev1.ConfigMap{}
+				Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      uiAppName + "-deployed-ui-apps",
+					Namespace: getOperatorNamespace(),
+				}, deployedAppsConfigMap)).To(Succeed())
+				Expect(deployedAppsConfigMap.Annotations).To(HaveKey("scality.com/deployed-apps-hash"))
+			})
+
+			It("should trigger rolling update when exposer is removed", func() {
+				By("Deploying the Shell UI with an exposer")
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				testNamespace := "test-exposer-removal"
+				ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}
+				Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+				defer k8sClient.Delete(ctx, ns)
+
+				component := &uiv1alpha1.ScalityUIComponent{
+					ObjectMeta: metav1.ObjectMeta{Name: "removal-component", Namespace: testNamespace},
+					Spec:       uiv1alpha1.ScalityUIComponentSpec{Image: "test:1.0.0"},
+				}
+				Expect(k8sClient.Create(ctx, component)).To(Succeed())
+				component.Status = uiv1alpha1.ScalityUIComponentStatus{
+					Kind: "micro-app", PublicPath: "/apps/removal-component", Version: "1.0.0",
+				}
+				component.Status.Conditions = []metav1.Condition{
+					{
+						Type:               "ConfigurationRetrieved",
+						Status:             metav1.ConditionTrue,
+						Reason:             "FetchSucceeded",
+						LastTransitionTime: metav1.Now(),
+					},
+				}
+				Expect(k8sClient.Status().Update(ctx, component)).To(Succeed())
+				defer k8sClient.Delete(ctx, component)
+
+				exposer := &uiv1alpha1.ScalityUIComponentExposer{
+					ObjectMeta: metav1.ObjectMeta{Name: "removal-exposer", Namespace: testNamespace},
+					Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+						ScalityUI: uiAppName, ScalityUIComponent: "removal-component", AppHistoryBasePath: "/removal-app",
+					},
+				}
+				Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+
+				By("Reconciling with exposer present")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Capturing hash with exposer present")
+				deployment := &appsv1.Deployment{}
+				deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, deploymentName, deployment)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+				hashWithExposer := deployment.Spec.Template.Annotations["scality.com/combined-hash"]
+				Expect(hashWithExposer).NotTo(BeEmpty())
+
+				By("Deleting the exposer")
+				Expect(k8sClient.Delete(ctx, exposer)).To(Succeed())
+
+				By("Reconciling after exposer removal")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying hash changed after exposer removal")
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, deploymentName, deployment)
+					if err != nil {
+						return false
+					}
+					newHash := deployment.Spec.Template.Annotations["scality.com/combined-hash"]
+					return newHash != "" && newHash != hashWithExposer
+				}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
+			})
+
+			It("should trigger rolling update when only config changes", func() {
+				By("Deploying the Shell UI initially")
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Capturing initial deployment hash")
+				deployment := &appsv1.Deployment{}
+				deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, deploymentName, deployment)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+				initialHash := deployment.Spec.Template.Annotations["scality.com/combined-hash"]
+
+				By("Updating ScalityUI spec to change config")
+				currentUI := &uiv1alpha1.ScalityUI{}
+				Expect(k8sClient.Get(ctx, clusterScopedName, currentUI)).To(Succeed())
+				currentUI.Spec.ProductName = "Updated Product Name"
+				Expect(k8sClient.Update(ctx, currentUI)).To(Succeed())
+
+				By("Reconciling after config change")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying hash changed after config update")
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, deploymentName, deployment)
+					if err != nil {
+						return false
+					}
+					newHash := deployment.Spec.Template.Annotations["scality.com/combined-hash"]
+					return newHash != "" && newHash != initialHash
+				}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
+			})
+
+			It("should handle missing ConfigMaps gracefully during first deployment", func() {
+				By("Creating a new ScalityUI without pre-existing ConfigMaps")
+				newUIName := "test-ui-missing-configmaps"
+				newClusterScopedName := types.NamespacedName{Name: newUIName}
+				newUI := &uiv1alpha1.ScalityUI{
+					ObjectMeta: metav1.ObjectMeta{Name: newUIName},
+					Spec: uiv1alpha1.ScalityUISpec{
+						Image:       "nginx:latest",
+						ProductName: "Missing ConfigMaps Test",
+					},
+				}
+				Expect(k8sClient.Create(ctx, newUI)).To(Succeed())
+				defer func() {
+					k8sClient.Delete(ctx, newUI)
+					cleanupTestResources(ctx, newClusterScopedName)
+				}()
+
+				By("Reconciling before ConfigMaps exist")
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: newClusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying deployment is created even without hash annotations")
+				deployment := &appsv1.Deployment{}
+				deploymentName := types.NamespacedName{Name: newUIName + "-deployment", Namespace: getOperatorNamespace()}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, deploymentName, deployment)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				By("Verifying ConfigMaps are now created")
+				configMap := &corev1.ConfigMap{}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, types.NamespacedName{
+						Name:      newUIName,
+						Namespace: getOperatorNamespace(),
+					}, configMap)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				deployedAppsConfigMap := &corev1.ConfigMap{}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, types.NamespacedName{
+						Name:      newUIName + "-deployed-ui-apps",
+						Namespace: getOperatorNamespace(),
+					}, deployedAppsConfigMap)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				By("Reconciling again after ConfigMaps exist")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: newClusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying deployment now has hash annotation")
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, deploymentName, deployment)
+					if err != nil {
+						return false
+					}
+					_, exists := deployment.Spec.Template.Annotations["scality.com/combined-hash"]
+					return exists
+				}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
+			})
+
+			It("should recover when ConfigMaps are recreated after deletion", func() {
+				By("Deploying the Shell UI initially")
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Capturing initial deployment hash")
+				deployment := &appsv1.Deployment{}
+				deploymentName := types.NamespacedName{Name: uiAppName + "-deployment", Namespace: getOperatorNamespace()}
+				Eventually(func() error {
+					return k8sClient.Get(ctx, deploymentName, deployment)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+				initialHash := deployment.Spec.Template.Annotations["scality.com/combined-hash"]
+				Expect(initialHash).NotTo(BeEmpty())
+
+				By("Deleting the config ConfigMap")
+				configMap := &corev1.ConfigMap{}
+				configMapName := types.NamespacedName{Name: uiAppName, Namespace: getOperatorNamespace()}
+				Expect(k8sClient.Get(ctx, configMapName, configMap)).To(Succeed())
+				Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
+
+				By("Reconciling to recreate ConfigMap")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying ConfigMap is recreated")
+				Eventually(func() error {
+					return k8sClient.Get(ctx, configMapName, configMap)
+				}, eventuallyTimeout, eventuallyInterval).Should(Succeed())
+
+				By("Verifying deployment gets updated hash after ConfigMap recreation")
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, deploymentName, deployment)
+					if err != nil {
+						return false
+					}
+					newHash := deployment.Spec.Template.Annotations["scality.com/combined-hash"]
+					return newHash != ""
+				}, eventuallyTimeout, eventuallyInterval).Should(BeTrue())
+			})
 		})
 
 		Describe("Shell Configuration Management", func() {
