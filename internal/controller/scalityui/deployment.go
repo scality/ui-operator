@@ -186,18 +186,10 @@ func newScalityUIDeploymentReconciler(cr ScalityUI, currentState State) reconcil
 						}
 
 						// Combine both hashes to trigger rolling update when either changes
-						if configHash != "" && deployedAppsHash != "" {
-							// Concatenate non-empty hashes with a separator and hash the result
-							combined := ""
-							if configHash != "" {
-								combined += "config:" + configHash + ";"
-							}
-							if deployedAppsHash != "" {
-								combined += "apps:" + deployedAppsHash + ";"
-							}
+						if configHash != "" || deployedAppsHash != "" {
+							combined := "config:" + configHash + ";apps:" + deployedAppsHash + ";"
 							sum := sha256.Sum256([]byte(combined))
-							combinedHash := hex.EncodeToString(sum[:])
-							podTemplate.Annotations["scality.com/combined-hash"] = combinedHash
+							podTemplate.Annotations["scality.com/combined-hash"] = hex.EncodeToString(sum[:])
 						}
 					},
 				},
