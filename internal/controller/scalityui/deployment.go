@@ -11,7 +11,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // newDeploymentReducer creates a StateReducer for managing the deployment using the framework
@@ -160,30 +159,12 @@ func newScalityUIDeploymentReconciler(cr ScalityUI, currentState State) reconcil
 							podTemplate.Annotations = make(map[string]string)
 						}
 
-						// Get config hash from ConfigMap if available
-						ctx := currentState.GetContext()
-						configMap := &corev1.ConfigMap{}
-						var configHash string
-						if err := currentState.GetKubeClient().Get(ctx, client.ObjectKey{
-							Name:      cr.Name,
-							Namespace: getOperatorNamespace(),
-						}, configMap); err == nil {
-							if hash, exists := configMap.Annotations["scality.com/config-hash"]; exists {
-								configHash = hash
-							}
-						}
+						// Get config hash from memory (set by configmap reducer)
+						// This avoids cache sync issues when reading from Kubernetes API
+						configHash, _ := currentState.GetSubresourceHash("configmap")
 
-						// Get deployed-apps hash from deployed-ui-apps ConfigMap
-						deployedAppsConfigMap := &corev1.ConfigMap{}
-						var deployedAppsHash string
-						if err := currentState.GetKubeClient().Get(ctx, client.ObjectKey{
-							Name:      cr.Name + "-deployed-ui-apps",
-							Namespace: getOperatorNamespace(),
-						}, deployedAppsConfigMap); err == nil {
-							if hash, exists := deployedAppsConfigMap.Annotations["scality.com/deployed-apps-hash"]; exists {
-								deployedAppsHash = hash
-							}
-						}
+						// Get deployed-apps hash from memory (set by deployed-apps-configmap reducer)
+						deployedAppsHash, _ := currentState.GetSubresourceHash("deployed-apps-configmap")
 
 						// Combine both hashes to trigger rolling update when either changes
 						if configHash != "" || deployedAppsHash != "" {
