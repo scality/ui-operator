@@ -105,7 +105,7 @@ func newDeployedAppsConfigMapReducer(r *ScalityUIReconciler, cr ScalityUI, curre
 				"appsCount", len(deployedApps), "configMap", configMapName)
 
 			// Store hash in memory for deployment to use (avoids cache sync issues)
-			currentState.SetSubresourceHash("deployed-apps-configmap", deployedAppsHash)
+			currentState.SetSubresourceHash(subresourceHashKeyDeployedApps, deployedAppsHash)
 
 			return reconcile.Result{}, nil
 		},
