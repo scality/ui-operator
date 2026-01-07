@@ -161,10 +161,10 @@ func newScalityUIDeploymentReconciler(cr ScalityUI, currentState State) reconcil
 
 						// Get config hash from memory (set by configmap reducer)
 						// This avoids cache sync issues when reading from Kubernetes API
-						configHash, _ := currentState.GetSubresourceHash("configmap")
+						configHash, _ := currentState.GetSubresourceHash(subresourceHashKeyConfigMap)
 
 						// Get deployed-apps hash from memory (set by deployed-apps-configmap reducer)
-						deployedAppsHash, _ := currentState.GetSubresourceHash("deployed-apps-configmap")
+						deployedAppsHash, _ := currentState.GetSubresourceHash(subresourceHashKeyDeployedApps)
 
 						// Combine both hashes to trigger rolling update when either changes
 						if configHash != "" || deployedAppsHash != "" {
