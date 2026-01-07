@@ -2,10 +2,7 @@ package scalityuicomponentexposer
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -50,27 +47,12 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeployment(
 		return ctrl.Result{}, nil
 	}
 
-	// Get the ConfigMap to calculate hash
-	configMapName := fmt.Sprintf("%s-%s", component.Name, configMapNameSuffix)
-	configMap := &corev1.ConfigMap{}
-	err = state.GetKubeClient().Get(ctx, types.NamespacedName{
-		Name:      configMapName,
-		Namespace: cr.GetNamespace(),
-	}, configMap)
-
-	if err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("ConfigMap not found, skipping deployment update", "configMap", configMapName)
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, fmt.Errorf("failed to get ConfigMap: %w", err)
-	}
-
-	// Calculate ConfigMap hash
-	configMapHash, err := r.calculateConfigMapHash(configMap)
-	if err != nil {
-		log.Error(err, "Failed to calculate ConfigMap hash")
-		return ctrl.Result{}, fmt.Errorf("failed to calculate ConfigMap hash: %w", err)
+	// Get ConfigMap hash from memory (set by configmap reducer)
+	// This avoids cache sync issues when reading from Kubernetes API
+	configMapHash, ok := state.GetSubresourceHash(configMapHashKey)
+	if !ok || configMapHash == "" {
+		log.Info("ConfigMap hash not found in memory, skipping deployment update")
+		return ctrl.Result{}, nil
 	}
 
 	// Update deployment
@@ -162,20 +144,6 @@ func (r *ScalityUIComponentExposerReconciler) updateComponentDeploymentInternal(
 	log.Info("Successfully updated deployment with ConfigMap mount",
 		"deployment", deployment.Name, "configChanged", configChanged, "operation", result)
 	return nil
-}
-
-// calculateConfigMapHash calculates the SHA-256 hash of the ConfigMap data
-func (r *ScalityUIComponentExposerReconciler) calculateConfigMapHash(configMap *corev1.ConfigMap) (string, error) {
-	// Create a sorted representation of all data for consistent hashing
-	var dataStrings []string
-	for key, value := range configMap.Data {
-		dataStrings = append(dataStrings, fmt.Sprintf("%s=%s", key, value))
-	}
-	sort.Strings(dataStrings)
-
-	combinedData := strings.Join(dataStrings, "|")
-	hash := sha256.Sum256([]byte(combinedData))
-	return hex.EncodeToString(hash[:]), nil
 }
 
 // ensureConfigMapVolume ensures the deployment has the specified ConfigMap volume
