@@ -63,7 +63,7 @@ func newScalityUIConfigMapReducer(r *ScalityUIReconciler, cr ScalityUI, currentS
 			logOperationResult(log, result, "ConfigMap", configMap.Name)
 
 			// Store hash in memory for deployment to use (avoids cache sync issues)
-			currentState.SetSubresourceHash(subresourceHashKeyConfigMap, configHash)
+			currentState.SetSubresourceHash(configMapHashKey, configHash)
 
 			return reconcile.Result{}, nil
 		},

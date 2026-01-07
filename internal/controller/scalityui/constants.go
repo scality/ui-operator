@@ -5,7 +5,7 @@ const (
 	// Deployed UI apps constants
 	deployedUIAppsKey = "deployed-ui-apps.json"
 
-	// Subresource hash keys for in-memory state passing
-	subresourceHashKeyConfigMap    = "configmap"
-	subresourceHashKeyDeployedApps = "deployed-apps-configmap"
+	// Subresource hash keys for in-memory state
+	configMapHashKey             = "configmap"
+	deployedAppsConfigMapHashKey = "deployed-apps-configmap"
 )
