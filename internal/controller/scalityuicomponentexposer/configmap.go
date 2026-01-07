@@ -1,8 +1,12 @@
 package scalityuicomponentexposer
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/go-logr/logr"
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
@@ -68,14 +72,32 @@ func (r *ScalityUIComponentExposerReconciler) reconcileConfigMap(
 		return ctrl.Result{}, fmt.Errorf("failed to create or update ConfigMap: %w", err)
 	}
 
+	// Calculate and store hash in memory for deployment-update reducer
+	// This avoids cache sync issues when reading from Kubernetes API
+	configMapHash := calculateConfigMapHash(configMap)
+	state.SetSubresourceHash(configMapHashKey, configMapHash)
+
 	log.Info("Successfully reconciled ConfigMap",
-		"configMap", configMapName, "operation", result)
+		"configMap", configMapName, "operation", result, "hash", configMapHash)
 
 	// Set status condition
 	setStatusCondition(cr, conditionTypeConfigMapReady, metav1.ConditionTrue,
 		reasonReconcileSucceeded, "ConfigMap successfully created/updated")
 
 	return ctrl.Result{}, nil
+}
+
+// calculateConfigMapHash calculates the SHA-256 hash of the ConfigMap data
+func calculateConfigMapHash(configMap *corev1.ConfigMap) string {
+	var dataStrings []string
+	for key, value := range configMap.Data {
+		dataStrings = append(dataStrings, fmt.Sprintf("%s=%s", key, value))
+	}
+	sort.Strings(dataStrings)
+
+	combinedData := strings.Join(dataStrings, "|")
+	hash := sha256.Sum256([]byte(combinedData))
+	return hex.EncodeToString(hash[:])
 }
 
 // updateConfigMapData updates the ConfigMap data with the runtime configuration

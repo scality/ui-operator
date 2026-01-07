@@ -34,4 +34,7 @@ const (
 
 	// Mount path constants
 	configsSubdirectory = "configs"
+
+	// Subresource hash key for in-memory state
+	configMapHashKey = "exposer-configmap"
 )
