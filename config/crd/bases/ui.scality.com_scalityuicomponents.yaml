@@ -1120,6 +1120,10 @@ spec:
               kind:
                 description: Kind represents the type of UI component
                 type: string
+              lastFetchedImage:
+                description: LastFetchedImage tracks which image we last fetched configuration
+                  from
+                type: string
               publicPath:
                 description: Path represents the URL path to the UI component
                 type: string
