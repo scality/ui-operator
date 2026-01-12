@@ -53,6 +53,8 @@ type ScalityUIComponentStatus struct {
 	Kind string `json:"kind,omitempty"`
 	// Version represents the version of the UI component
 	Version string `json:"version,omitempty"`
+	// LastFetchedImage tracks which image we last fetched configuration from
+	LastFetchedImage string `json:"lastFetchedImage,omitempty"`
 	// Conditions represent the latest available observations of a UI component's state
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
