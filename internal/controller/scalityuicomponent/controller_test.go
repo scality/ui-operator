@@ -450,9 +450,8 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			}
 			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
 
-			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 			updatedScalityUIComponent := &uiv1alpha1.ScalityUIComponent{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedScalityUIComponent)).To(Succeed())
@@ -463,8 +462,11 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(cond.Reason).To(Equal("ParseFailed"))
 			Expect(cond.Message).To(ContainSubstring("Failed to parse configuration"))
 
-			By("Verifying that the mock was called")
-			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2)) // Configuration fetched twice due to requeue after parse failure
+			By("Verifying that LastFetchedImage is set to prevent repeated fetch attempts")
+			Expect(updatedScalityUIComponent.Status.LastFetchedImage).To(Equal("scality/ui-component:latest"))
+
+			By("Verifying that the mock was called only once (parse failures don't trigger refetch)")
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
 			Expect(mockFetcher.ReceivedCalls[0].Namespace).To(Equal(testNamespace))
 			Expect(mockFetcher.ReceivedCalls[0].ServiceName).To(Equal(resourceName))
 			Expect(mockFetcher.ReceivedCalls[0].Port).To(Equal(DefaultServicePort))
@@ -711,6 +713,287 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
 			Expect(scalityUIComponent.Status.LastFetchedImage).To(Equal("scality/ui-component:v2.0.0"))
 			Expect(scalityUIComponent.Status.PublicPath).To(Equal("/integration-test/"))
+		})
+	})
+
+	Context("Parse failure handling", func() {
+		It("should not retry fetch after parse failure for same image", func() {
+			ctx := context.Background()
+
+			scalityUIComponent := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-parse-failure",
+					Namespace: "default",
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/broken-json:v1.0.0",
+					MountPath: "/usr/share/ui-config",
+				},
+			}
+			Expect(k8sClient.Create(ctx, scalityUIComponent)).To(Succeed())
+
+			mockFetcher := &MockConfigFetcher{
+				ConfigContent: "{ invalid json",
+			}
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ConfigFetcher: mockFetcher,
+			}
+
+			typeNamespacedName := types.NamespacedName{
+				Name:      "test-parse-failure",
+				Namespace: "default",
+			}
+
+			By("First reconcile - creates deployment")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Wait for deployment to be ready")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.Replicas = 1
+			deployment.Status.UpdatedReplicas = 1
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Second reconcile - fetches config and fails to parse")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should fetch once")
+
+			By("Verify LastFetchedImage is set despite parse failure")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			Expect(scalityUIComponent.Status.LastFetchedImage).To(Equal("scality/broken-json:v1.0.0"))
+
+			By("Third reconcile - should NOT fetch again (same image)")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should still be 1 - no refetch")
+
+			By("Verify ConfigurationRetrieved condition is False")
+			condition := meta.FindStatusCondition(scalityUIComponent.Status.Conditions, "ConfigurationRetrieved")
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("ParseFailed"))
+		})
+	})
+
+	Context("Validation failure handling", func() {
+		It("should not retry fetch after validation failure for same image", func() {
+			ctx := context.Background()
+
+			scalityUIComponent := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-validation-failure",
+					Namespace: "default",
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/invalid-config:v1.0.0",
+					MountPath: "/usr/share/ui-config",
+				},
+			}
+			Expect(k8sClient.Create(ctx, scalityUIComponent)).To(Succeed())
+
+			mockFetcher := &MockConfigFetcher{
+				ConfigContent: `{
+					"metadata": {},
+					"spec": {
+						"publicPath": "/test/"
+					}
+				}`,
+			}
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ConfigFetcher: mockFetcher,
+			}
+
+			typeNamespacedName := types.NamespacedName{
+				Name:      "test-validation-failure",
+				Namespace: "default",
+			}
+
+			By("First reconcile - creates deployment")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Wait for deployment to be ready")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.Replicas = 1
+			deployment.Status.UpdatedReplicas = 1
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Second reconcile - fetches config and fails validation")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should fetch once")
+
+			By("Verify LastFetchedImage is set despite validation failure")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			Expect(scalityUIComponent.Status.LastFetchedImage).To(Equal("scality/invalid-config:v1.0.0"))
+
+			By("Third reconcile - should NOT fetch again (same image)")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should still be 1 - no refetch")
+
+			By("Verify ConfigurationRetrieved condition is False")
+			condition := meta.FindStatusCondition(scalityUIComponent.Status.Conditions, "ConfigurationRetrieved")
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("ValidationFailed"))
+		})
+	})
+
+	Context("Rolling update handling", func() {
+		It("should wait for rolling update to complete before fetching", func() {
+			ctx := context.Background()
+
+			scalityUIComponent := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rolling-update",
+					Namespace: "default",
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/ui-component:v1.0.0",
+					MountPath: "/usr/share/ui-config",
+				},
+			}
+			Expect(k8sClient.Create(ctx, scalityUIComponent)).To(Succeed())
+
+			mockFetcher := &MockConfigFetcher{
+				ConfigContent: `{
+					"metadata": {
+						"kind": "app",
+						"name": "test-app"
+					},
+					"spec": {
+						"publicPath": "/test/",
+						"version": "1.0.0"
+					}
+				}`,
+			}
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ConfigFetcher: mockFetcher,
+			}
+
+			typeNamespacedName := types.NamespacedName{
+				Name:      "test-rolling-update",
+				Namespace: "default",
+			}
+
+			By("First reconcile - creates deployment")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Simulate rolling update - ReadyReplicas=1 but UpdatedReplicas=0")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.Replicas = 1
+			deployment.Status.UpdatedReplicas = 0
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Second reconcile - should NOT fetch (rolling update incomplete)")
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(10 * time.Second))
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(0), "Should not fetch during rolling update")
+
+			By("Complete rolling update")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, deployment)).To(Succeed())
+			deployment.Status.UpdatedReplicas = 1
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Third reconcile - should fetch now (rolling update complete)")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should fetch after rolling update completes")
+		})
+	})
+
+	Context("Nil annotations handling", func() {
+		It("should handle force-refresh annotation when Annotations map is nil", func() {
+			ctx := context.Background()
+
+			scalityUIComponent := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-nil-annotations",
+					Namespace: "default",
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/ui-component:v1.0.0",
+					MountPath: "/usr/share/ui-config",
+				},
+			}
+			Expect(k8sClient.Create(ctx, scalityUIComponent)).To(Succeed())
+
+			mockFetcher := &MockConfigFetcher{
+				ConfigContent: `{
+					"metadata": {
+						"kind": "app",
+						"name": "test-app"
+					},
+					"spec": {
+						"publicPath": "/test/",
+						"version": "1.0.0"
+					}
+				}`,
+			}
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ConfigFetcher: mockFetcher,
+			}
+
+			typeNamespacedName := types.NamespacedName{
+				Name:      "test-nil-annotations",
+				Namespace: "default",
+			}
+
+			By("First reconcile - creates deployment")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Wait for deployment to be ready")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.Replicas = 1
+			deployment.Status.UpdatedReplicas = 1
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Verify Annotations is nil")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			Expect(scalityUIComponent.Annotations).To(BeNil())
+
+			By("Second reconcile with nil Annotations - should not panic")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should fetch successfully")
+
+			By("Verify status is updated correctly")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			Expect(scalityUIComponent.Status.PublicPath).To(Equal("/test/"))
+			Expect(scalityUIComponent.Status.LastFetchedImage).To(Equal("scality/ui-component:v1.0.0"))
 		})
 	})
 })
