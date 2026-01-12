@@ -285,6 +285,15 @@ func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Cont
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
+	// Wait for rolling update to complete to avoid fetching from old pods
+	if deployment.Status.UpdatedReplicas < deployment.Status.Replicas {
+		logger.Info("Deployment still rolling out, will retry",
+			"readyReplicas", deployment.Status.ReadyReplicas,
+			"updatedReplicas", deployment.Status.UpdatedReplicas,
+			"targetReplicas", deployment.Status.Replicas)
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
 	// Extract current image from deployment by finding the matching container
 	var currentImage string
 	for _, container := range deployment.Spec.Template.Spec.Containers {
@@ -314,9 +323,11 @@ func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Cont
 	}
 
 	// Check for force-refresh annotation
-	if val, exists := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]; exists && val == "true" {
-		needsFetch = true
-		reasons = append(reasons, "force-refresh annotation present")
+	if scalityUIComponent.Annotations != nil {
+		if val, exists := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]; exists && val == "true" {
+			needsFetch = true
+			reasons = append(reasons, "force-refresh annotation present")
+		}
 	}
 
 	// Skip fetch if not needed
@@ -369,6 +380,9 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 			Message: fmt.Sprintf("Failed to parse configuration from image %s: %v", currentImage, err),
 		})
 
+		// Update LastFetchedImage to prevent repeated fetch attempts for the same broken image
+		scalityUIComponent.Status.LastFetchedImage = currentImage
+
 		if statusErr := r.Status().Update(ctx, scalityUIComponent); statusErr != nil {
 			logger.Error(statusErr, "Failed to update ScalityUIComponent status after parse failure")
 		}
@@ -386,6 +400,9 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 			Reason:  "ValidationFailed",
 			Message: fmt.Sprintf("Configuration validation failed for image %s: %v", currentImage, err),
 		})
+
+		// Update LastFetchedImage to prevent repeated fetch attempts for the same invalid config
+		scalityUIComponent.Status.LastFetchedImage = currentImage
 
 		if statusErr := r.Status().Update(ctx, scalityUIComponent); statusErr != nil {
 			logger.Error(statusErr, "Failed to update ScalityUIComponent status after validation failure")
@@ -447,23 +464,27 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 
 	// Remove force-refresh annotation if it exists
 	// Do this after status update to avoid race conditions
-	if _, exists := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]; exists {
-		// Re-fetch to get latest resourceVersion
-		fresh := &uiv1alpha1.ScalityUIComponent{}
-		if err := r.Get(ctx, client.ObjectKey{
-			Name:      scalityUIComponent.Name,
-			Namespace: scalityUIComponent.Namespace,
-		}, fresh); err != nil {
-			logger.Error(err, "Failed to get fresh resource for annotation removal")
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
+	if scalityUIComponent.Annotations != nil {
+		if _, exists := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]; exists {
+			// Re-fetch to get latest resourceVersion
+			fresh := &uiv1alpha1.ScalityUIComponent{}
+			if err := r.Get(ctx, client.ObjectKey{
+				Name:      scalityUIComponent.Name,
+				Namespace: scalityUIComponent.Namespace,
+			}, fresh); err != nil {
+				logger.Error(err, "Failed to get fresh resource for annotation removal")
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
 
-		delete(fresh.Annotations, "ui.scality.com/force-refresh")
-		if err := r.Update(ctx, fresh); err != nil {
-			logger.Error(err, "Failed to remove force-refresh annotation")
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			if fresh.Annotations != nil {
+				delete(fresh.Annotations, "ui.scality.com/force-refresh")
+				if err := r.Update(ctx, fresh); err != nil {
+					logger.Error(err, "Failed to remove force-refresh annotation")
+					return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+				}
+				logger.Info("Removed force-refresh annotation after successful fetch")
+			}
 		}
-		logger.Info("Removed force-refresh annotation after successful fetch")
 	}
 
 	return ctrl.Result{}, nil
