@@ -632,5 +632,85 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(updatedDeployment.Spec.Template.Annotations).To(HaveKey("custom-annotation"))
 			Expect(updatedDeployment.Spec.Template.Annotations["custom-annotation"]).To(Equal("test-value"))
 		})
+
+		It("should only fetch configuration when image changes - integration test", func() {
+			By("Setting up mock fetcher that tracks all calls")
+			mockFetcher := &MockConfigFetcher{
+				ShouldFail: false,
+				ConfigContent: `{
+					"kind": "UIModule",
+					"apiVersion": "v1alpha1",
+					"metadata": {"kind": "IntegrationTestKind"},
+					"spec": {
+						"remoteEntryPath": "/remoteEntry.js",
+						"publicPath": "/integration-test/",
+						"version": "1.0.0"
+					}
+				}`,
+			}
+
+			controllerReconciler := NewScalityUIComponentReconciler(k8sClient, k8sClient.Scheme())
+			controllerReconciler.ConfigFetcher = mockFetcher
+
+			By("First reconcile - creating deployment and service")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Making deployment ready")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, deploymentNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			deployment.Status.UpdatedReplicas = 1
+			deployment.Status.Replicas = 1
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.AvailableReplicas = 1
+			deployment.Status.Conditions = []appsv1.DeploymentCondition{
+				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue},
+			}
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Second reconcile - should fetch configuration (first time)")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should fetch on first successful reconcile")
+
+			By("Third reconcile - should NOT fetch (image unchanged)")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should still be 1 - no fetch when image unchanged")
+
+			By("Fourth reconcile - should still NOT fetch")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should still be 1 - multiple reconciles don't trigger fetch")
+
+			By("Fifth reconcile - should still NOT fetch")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should still be 1 - proving no reconcile storm")
+
+			By("Updating image to trigger new fetch")
+			scalityUIComponent := &uiv1alpha1.ScalityUIComponent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			scalityUIComponent.Spec.Image = "scality/ui-component:v2.0.0"
+			Expect(k8sClient.Update(ctx, scalityUIComponent)).To(Succeed())
+
+			By("Reconciling after image change - should fetch again")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2), "Should fetch again after image change")
+
+			By("Reconciling again - should NOT fetch (new image already fetched)")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2), "Should stay at 2 - new image already processed")
+
+			By("Verifying LastFetchedImage is tracked correctly")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			Expect(scalityUIComponent.Status.LastFetchedImage).To(Equal("scality/ui-component:v2.0.0"))
+			Expect(scalityUIComponent.Status.PublicPath).To(Equal("/integration-test/"))
+		})
 	})
 })
