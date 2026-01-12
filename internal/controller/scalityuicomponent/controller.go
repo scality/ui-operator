@@ -387,6 +387,9 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 			logger.Error(statusErr, "Failed to update ScalityUIComponent status after parse failure")
 		}
 
+		// Remove force-refresh annotation even on failure to prevent infinite fetch loops
+		r.removeForceRefreshAnnotation(ctx, scalityUIComponent)
+
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
@@ -407,6 +410,9 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 		if statusErr := r.Status().Update(ctx, scalityUIComponent); statusErr != nil {
 			logger.Error(statusErr, "Failed to update ScalityUIComponent status after validation failure")
 		}
+
+		// Remove force-refresh annotation even on failure to prevent infinite fetch loops
+		r.removeForceRefreshAnnotation(ctx, scalityUIComponent)
 
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -462,32 +468,45 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 		"version", config.Spec.Version,
 		"lastFetchedImage", currentImage)
 
-	// Remove force-refresh annotation if it exists
-	// Do this after status update to avoid race conditions
-	if scalityUIComponent.Annotations != nil {
-		if _, exists := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]; exists {
-			// Re-fetch to get latest resourceVersion
-			fresh := &uiv1alpha1.ScalityUIComponent{}
-			if err := r.Get(ctx, client.ObjectKey{
-				Name:      scalityUIComponent.Name,
-				Namespace: scalityUIComponent.Namespace,
-			}, fresh); err != nil {
-				logger.Error(err, "Failed to get fresh resource for annotation removal")
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-			}
-
-			if fresh.Annotations != nil {
-				delete(fresh.Annotations, "ui.scality.com/force-refresh")
-				if err := r.Update(ctx, fresh); err != nil {
-					logger.Error(err, "Failed to remove force-refresh annotation")
-					return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-				}
-				logger.Info("Removed force-refresh annotation after successful fetch")
-			}
-		}
-	}
+	// Remove force-refresh annotation if it exists (also done on failure to prevent fetch loops)
+	r.removeForceRefreshAnnotation(ctx, scalityUIComponent)
 
 	return ctrl.Result{}, nil
+}
+
+func (r *ScalityUIComponentReconciler) removeForceRefreshAnnotation(ctx context.Context,
+	scalityUIComponent *uiv1alpha1.ScalityUIComponent) {
+	logger := ctrl.LoggerFrom(ctx)
+
+	if scalityUIComponent.Annotations == nil {
+		return
+	}
+
+	if _, exists := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]; !exists {
+		return
+	}
+
+	// Re-fetch to get latest resourceVersion
+	fresh := &uiv1alpha1.ScalityUIComponent{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Name:      scalityUIComponent.Name,
+		Namespace: scalityUIComponent.Namespace,
+	}, fresh); err != nil {
+		logger.Error(err, "Failed to get fresh resource for annotation removal")
+		return
+	}
+
+	if fresh.Annotations == nil {
+		return
+	}
+
+	delete(fresh.Annotations, "ui.scality.com/force-refresh")
+	if err := r.Update(ctx, fresh); err != nil {
+		logger.Error(err, "Failed to remove force-refresh annotation")
+		return
+	}
+
+	logger.Info("Removed force-refresh annotation")
 }
 
 func (r *ScalityUIComponentReconciler) fetchMicroAppConfig(ctx context.Context, namespace, serviceName string) (string, error) {
