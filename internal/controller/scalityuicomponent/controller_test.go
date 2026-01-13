@@ -990,7 +990,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			if scalityUIComponent.Annotations == nil {
 				scalityUIComponent.Annotations = make(map[string]string)
 			}
-			scalityUIComponent.Annotations["ui.scality.com/force-refresh"] = "true"
+			scalityUIComponent.Annotations[ForceRefreshAnnotation] = "true"
 			Expect(k8sClient.Update(ctx, scalityUIComponent)).To(Succeed())
 
 			By("Update mock to return different config")
@@ -1011,7 +1011,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			By("Verify force-refresh annotation was removed")
 			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
-			_, hasAnnotation := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]
+			_, hasAnnotation := scalityUIComponent.Annotations[ForceRefreshAnnotation]
 			Expect(hasAnnotation).To(BeFalse(), "force-refresh annotation should be removed after fetch")
 
 			By("Fifth reconcile - no fetch (annotation removed, image unchanged)")
@@ -1028,7 +1028,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 					Name:      "test-force-refresh-failure",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"ui.scality.com/force-refresh": "true",
+						ForceRefreshAnnotation: "true",
 					},
 				},
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
@@ -1075,7 +1075,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			By("Verify force-refresh annotation was NOT removed on fetch failure (only removed on parse/validation failure)")
 			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
-			_, hasAnnotation := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]
+			_, hasAnnotation := scalityUIComponent.Annotations[ForceRefreshAnnotation]
 			Expect(hasAnnotation).To(BeTrue(), "force-refresh annotation should remain on fetch failure for retry")
 		})
 
@@ -1087,7 +1087,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 					Name:      "test-force-refresh-parse-fail",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"ui.scality.com/force-refresh": "true",
+						ForceRefreshAnnotation: "true",
 					},
 				},
 				Spec: uiv1alpha1.ScalityUIComponentSpec{
@@ -1132,7 +1132,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 
 			By("Verify force-refresh annotation was removed on parse failure")
 			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
-			_, hasAnnotation := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]
+			_, hasAnnotation := scalityUIComponent.Annotations[ForceRefreshAnnotation]
 			Expect(hasAnnotation).To(BeFalse(), "force-refresh annotation should be removed on parse failure")
 		})
 	})
