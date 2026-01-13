@@ -22,9 +22,6 @@ import (
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 )
 
-// DefaultServicePort is the default port used to connect to the UI component service
-const DefaultServicePort = 80
-
 // MicroAppConfig represents the structure of the micro-app-configuration file
 type MicroAppConfig struct {
 	Kind       string     `json:"kind"`
@@ -325,7 +322,7 @@ func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Cont
 
 	// Check for force-refresh annotation
 	if scalityUIComponent.Annotations != nil {
-		if val, exists := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]; exists && val == "true" {
+		if val, exists := scalityUIComponent.Annotations[ForceRefreshAnnotation]; exists && val == "true" {
 			needsFetch = true
 			reasons = append(reasons, "force-refresh annotation present")
 		}
@@ -483,7 +480,7 @@ func (r *ScalityUIComponentReconciler) removeForceRefreshAnnotation(ctx context.
 		return
 	}
 
-	if _, exists := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]; !exists {
+	if _, exists := scalityUIComponent.Annotations[ForceRefreshAnnotation]; !exists {
 		return
 	}
 
@@ -502,11 +499,11 @@ func (r *ScalityUIComponentReconciler) removeForceRefreshAnnotation(ctx context.
 			return nil
 		}
 
-		if _, exists := fresh.Annotations["ui.scality.com/force-refresh"]; !exists {
+		if _, exists := fresh.Annotations[ForceRefreshAnnotation]; !exists {
 			return nil
 		}
 
-		delete(fresh.Annotations, "ui.scality.com/force-refresh")
+		delete(fresh.Annotations, ForceRefreshAnnotation)
 		return r.Update(ctx, fresh)
 	})
 
