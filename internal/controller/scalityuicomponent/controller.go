@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -486,23 +487,31 @@ func (r *ScalityUIComponentReconciler) removeForceRefreshAnnotation(ctx context.
 		return
 	}
 
-	// Re-fetch to get latest resourceVersion
-	fresh := &uiv1alpha1.ScalityUIComponent{}
-	if err := r.Get(ctx, client.ObjectKey{
+	key := client.ObjectKey{
 		Name:      scalityUIComponent.Name,
 		Namespace: scalityUIComponent.Namespace,
-	}, fresh); err != nil {
-		logger.Error(err, "Failed to get fresh resource for annotation removal")
-		return
 	}
 
-	if fresh.Annotations == nil {
-		return
-	}
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		fresh := &uiv1alpha1.ScalityUIComponent{}
+		if err := r.Get(ctx, key, fresh); err != nil {
+			return err
+		}
 
-	delete(fresh.Annotations, "ui.scality.com/force-refresh")
-	if err := r.Update(ctx, fresh); err != nil {
-		logger.Error(err, "Failed to remove force-refresh annotation")
+		if fresh.Annotations == nil {
+			return nil
+		}
+
+		if _, exists := fresh.Annotations["ui.scality.com/force-refresh"]; !exists {
+			return nil
+		}
+
+		delete(fresh.Annotations, "ui.scality.com/force-refresh")
+		return r.Update(ctx, fresh)
+	})
+
+	if err != nil {
+		logger.Error(err, "Failed to remove force-refresh annotation after retries")
 		return
 	}
 
