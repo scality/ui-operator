@@ -927,6 +927,216 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 		})
 	})
 
+	Context("Force-refresh annotation", func() {
+		It("should trigger fetch when force-refresh annotation is present even if image unchanged", func() {
+			ctx := context.Background()
+
+			scalityUIComponent := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-force-refresh",
+					Namespace: "default",
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/ui-component:v1.0.0",
+					MountPath: "/usr/share/ui-config",
+				},
+			}
+			Expect(k8sClient.Create(ctx, scalityUIComponent)).To(Succeed())
+
+			mockFetcher := &MockConfigFetcher{
+				ConfigContent: `{
+					"metadata": {"kind": "TestKind"},
+					"spec": {"publicPath": "/test/", "version": "1.0.0"}
+				}`,
+			}
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ConfigFetcher: mockFetcher,
+			}
+
+			typeNamespacedName := types.NamespacedName{
+				Name:      "test-force-refresh",
+				Namespace: "default",
+			}
+
+			By("First reconcile - creates deployment")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Make deployment ready")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.Replicas = 1
+			deployment.Status.UpdatedReplicas = 1
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Second reconcile - initial fetch")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should fetch on initial reconcile")
+
+			By("Third reconcile - no fetch (image unchanged)")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should not fetch - image unchanged")
+
+			By("Add force-refresh annotation")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			if scalityUIComponent.Annotations == nil {
+				scalityUIComponent.Annotations = make(map[string]string)
+			}
+			scalityUIComponent.Annotations["ui.scality.com/force-refresh"] = "true"
+			Expect(k8sClient.Update(ctx, scalityUIComponent)).To(Succeed())
+
+			By("Update mock to return different config")
+			mockFetcher.ConfigContent = `{
+				"metadata": {"kind": "TestKind"},
+				"spec": {"publicPath": "/updated-path/", "version": "1.0.1"}
+			}`
+
+			By("Fourth reconcile - should fetch due to force-refresh annotation")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2), "Should fetch due to force-refresh annotation")
+
+			By("Verify configuration was updated")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			Expect(scalityUIComponent.Status.PublicPath).To(Equal("/updated-path/"))
+			Expect(scalityUIComponent.Status.Version).To(Equal("1.0.1"))
+
+			By("Verify force-refresh annotation was removed")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			_, hasAnnotation := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]
+			Expect(hasAnnotation).To(BeFalse(), "force-refresh annotation should be removed after fetch")
+
+			By("Fifth reconcile - no fetch (annotation removed, image unchanged)")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2), "Should not fetch - annotation removed")
+		})
+
+		It("should remove force-refresh annotation even on fetch failure", func() {
+			ctx := context.Background()
+
+			scalityUIComponent := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-force-refresh-failure",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"ui.scality.com/force-refresh": "true",
+					},
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/ui-component:v1.0.0",
+					MountPath: "/usr/share/ui-config",
+				},
+			}
+			Expect(k8sClient.Create(ctx, scalityUIComponent)).To(Succeed())
+
+			mockFetcher := &MockConfigFetcher{
+				ShouldFail:   true,
+				ErrorMessage: "simulated fetch failure",
+			}
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ConfigFetcher: mockFetcher,
+			}
+
+			typeNamespacedName := types.NamespacedName{
+				Name:      "test-force-refresh-failure",
+				Namespace: "default",
+			}
+
+			By("First reconcile - creates deployment")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Make deployment ready")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.Replicas = 1
+			deployment.Status.UpdatedReplicas = 1
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Second reconcile - fetch fails")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should attempt fetch")
+
+			By("Verify force-refresh annotation was NOT removed on fetch failure (only removed on parse/validation failure)")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			_, hasAnnotation := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]
+			Expect(hasAnnotation).To(BeTrue(), "force-refresh annotation should remain on fetch failure for retry")
+		})
+
+		It("should remove force-refresh annotation on parse failure", func() {
+			ctx := context.Background()
+
+			scalityUIComponent := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-force-refresh-parse-fail",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"ui.scality.com/force-refresh": "true",
+					},
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/ui-component:v1.0.0",
+					MountPath: "/usr/share/ui-config",
+				},
+			}
+			Expect(k8sClient.Create(ctx, scalityUIComponent)).To(Succeed())
+
+			mockFetcher := &MockConfigFetcher{
+				ConfigContent: "{ invalid json",
+			}
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ConfigFetcher: mockFetcher,
+			}
+
+			typeNamespacedName := types.NamespacedName{
+				Name:      "test-force-refresh-parse-fail",
+				Namespace: "default",
+			}
+
+			By("First reconcile - creates deployment")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Make deployment ready")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.Replicas = 1
+			deployment.Status.UpdatedReplicas = 1
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Second reconcile - parse fails")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verify force-refresh annotation was removed on parse failure")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			_, hasAnnotation := scalityUIComponent.Annotations["ui.scality.com/force-refresh"]
+			Expect(hasAnnotation).To(BeFalse(), "force-refresh annotation should be removed on parse failure")
+		})
+	})
+
 	Context("Nil annotations handling", func() {
 		It("should handle force-refresh annotation when Annotations map is nil", func() {
 			ctx := context.Background()
