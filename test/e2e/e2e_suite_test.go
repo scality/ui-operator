@@ -24,9 +24,13 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/envfuncs"
 	"sigs.k8s.io/e2e-framework/support/kind"
+
+	"github.com/scality/ui-operator/test/e2e/framework"
 )
 
 var testenv env.Environment
+
+const crdPath = "../../config/crd/bases"
 
 func TestMain(m *testing.M) {
 	testenv = env.New()
@@ -34,9 +38,12 @@ func TestMain(m *testing.M) {
 
 	testenv.Setup(
 		envfuncs.CreateCluster(kind.NewProvider(), kindClusterName),
+		envfuncs.SetupCRDs(crdPath, "*"),
+		framework.SetupScheme(),
 	)
 
 	testenv.Finish(
+		envfuncs.TeardownCRDs(crdPath, "*"),
 		envfuncs.DestroyCluster(kindClusterName),
 	)
 
