@@ -17,16 +17,28 @@ limitations under the License.
 package e2e
 
 import (
-	"fmt"
+	"os"
 	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"sigs.k8s.io/e2e-framework/pkg/env"
+	"sigs.k8s.io/e2e-framework/pkg/envconf"
+	"sigs.k8s.io/e2e-framework/pkg/envfuncs"
+	"sigs.k8s.io/e2e-framework/support/kind"
 )
 
-// Run e2e tests using the Ginkgo runner.
-func TestE2E(t *testing.T) {
-	RegisterFailHandler(Fail)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting ui-operator suite\n")
-	RunSpecs(t, "e2e suite")
+var testenv env.Environment
+
+func TestMain(m *testing.M) {
+	testenv = env.New()
+	kindClusterName := envconf.RandomName("ui-operator-e2e", 16)
+
+	testenv.Setup(
+		envfuncs.CreateCluster(kind.NewProvider(), kindClusterName),
+	)
+
+	testenv.Finish(
+		envfuncs.DestroyCluster(kindClusterName),
+	)
+
+	os.Exit(testenv.Run(m))
 }
