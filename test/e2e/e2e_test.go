@@ -20,25 +20,28 @@ import (
 	"context"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
+
+	"github.com/scality/ui-operator/test/e2e/framework"
 )
 
-func TestKubernetesConnection(t *testing.T) {
-	feature := features.New("cluster-connection").
-		Assess("can list namespaces", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+func TestCRDInstallation(t *testing.T) {
+	expectedCRDs := []string{
+		"scalityuis.ui.scality.com",
+		"scalityuicomponents.ui.scality.com",
+		"scalityuicomponentexposers.ui.scality.com",
+	}
+
+	feature := features.New("crd-installation").
+		Assess("all CRDs are registered and established", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 
-			var namespaces corev1.NamespaceList
-			if err := client.Resources().List(ctx, &namespaces); err != nil {
-				t.Fatalf("failed to list namespaces: %v", err)
-			}
-
-			t.Logf("Found %d namespaces", len(namespaces.Items))
-
-			if len(namespaces.Items) == 0 {
-				t.Fatal("expected at least one namespace")
+			for _, crdName := range expectedCRDs {
+				if err := framework.WaitForCRDEstablished(ctx, client, crdName); err != nil {
+					t.Fatalf("CRD %s not established within timeout: %v", crdName, err)
+				}
+				t.Logf("✓ CRD %s is registered and established", crdName)
 			}
 
 			return ctx
