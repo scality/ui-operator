@@ -37,6 +37,7 @@ func TestMain(m *testing.M) {
 	testenv.Setup(
 		envfuncs.CreateCluster(kind.NewProvider(), kindClusterName),
 		framework.SetupScheme(),
+		framework.BuildAndLoadMockServerSetup(kindClusterName),
 		framework.DeployOperatorSetup(kindClusterName),
 	)
 
