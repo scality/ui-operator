@@ -50,3 +50,49 @@ func TestCRDInstallation(t *testing.T) {
 
 	testenv.Test(t, feature)
 }
+
+func TestOperatorDeployment(t *testing.T) {
+	if framework.SkipOperatorDeploy() {
+		t.Skip("Skipping operator deployment test (E2E_SKIP_OPERATOR=true)")
+	}
+
+	feature := features.New("operator-deployment").
+		Assess("controller-manager deployment is ready", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client := cfg.Client()
+
+			err := framework.WaitForDeploymentReady(
+				ctx,
+				client,
+				framework.OperatorNamespace,
+				framework.OperatorDeployment,
+				framework.LongTimeout,
+			)
+			if err != nil {
+				t.Fatalf("Operator deployment not ready: %v", err)
+			}
+			t.Logf("✓ Deployment %s/%s is ready", framework.OperatorNamespace, framework.OperatorDeployment)
+
+			return ctx
+		}).
+		Assess("controller-manager pod is running", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client := cfg.Client()
+
+			pod, err := framework.WaitForPodRunning(
+				ctx,
+				client,
+				framework.OperatorNamespace,
+				framework.ControlPlaneLabel,
+				framework.ControlPlaneValue,
+				framework.LongTimeout,
+			)
+			if err != nil {
+				t.Fatalf("Operator pod not running: %v", err)
+			}
+			t.Logf("✓ Pod %s is running", pod.Name)
+
+			return ctx
+		}).
+		Feature()
+
+	testenv.Test(t, feature)
+}
