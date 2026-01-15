@@ -30,20 +30,18 @@ import (
 
 var testenv env.Environment
 
-const crdPath = "../../config/crd/bases"
-
 func TestMain(m *testing.M) {
 	testenv = env.New()
 	kindClusterName := envconf.RandomName("ui-operator-e2e", 16)
 
 	testenv.Setup(
 		envfuncs.CreateCluster(kind.NewProvider(), kindClusterName),
-		envfuncs.SetupCRDs(crdPath, "*"),
 		framework.SetupScheme(),
+		framework.DeployOperatorSetup(kindClusterName),
 	)
 
 	testenv.Finish(
-		envfuncs.TeardownCRDs(crdPath, "*"),
+		framework.UndeployOperatorTeardown(),
 		envfuncs.DestroyCluster(kindClusterName),
 	)
 
