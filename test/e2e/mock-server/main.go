@@ -38,6 +38,7 @@ func defaultMicroAppConfig() string {
   "kind": "MicroAppRuntimeConfiguration",
   "apiVersion": "ui.scality.com/v1alpha1",
   "metadata": {
+    "kind": "shell",
     "name": "mock-component"
   },
   "spec": {
@@ -143,7 +144,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "80"
 	}
 
 	server := NewServer()

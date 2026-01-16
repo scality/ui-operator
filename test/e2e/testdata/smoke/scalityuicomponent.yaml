@@ -1,0 +1,8 @@
+apiVersion: ui.scality.com/v1alpha1
+kind: ScalityUIComponent
+metadata:
+  name: e2e-smoke-component
+  namespace: "{{.namespace}}"
+spec:
+  image: mock-server:e2e
+  mountPath: /app/config

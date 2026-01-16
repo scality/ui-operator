@@ -1,0 +1,7 @@
+apiVersion: ui.scality.com/v1alpha1
+kind: ScalityUI
+metadata:
+  name: e2e-smoke-ui
+spec:
+  image: nginx:latest
+  productName: "E2E Smoke Test"

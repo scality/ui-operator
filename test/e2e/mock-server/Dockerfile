@@ -7,6 +7,6 @@ RUN CGO_ENABLED=0 go build -o mock-server main.go
 FROM alpine:3.21
 
 COPY --from=builder /app/mock-server /mock-server
-EXPOSE 8080
+EXPOSE 80
 
 CMD ["/mock-server"]
