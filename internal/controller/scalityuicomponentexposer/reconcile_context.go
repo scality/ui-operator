@@ -12,6 +12,7 @@ import (
 
 type reconcileContext struct {
 	reconciler.BaseReconcileState
+	oldStatus *uiv1alpha1.ScalityUIComponentExposerStatus
 }
 
 var _ reconciler.State = &reconcileContext{}
@@ -22,9 +23,25 @@ func newReconcileContextWithCtx(ctx context.Context) *reconcileContext {
 	}
 }
 
+// SetOldStatus stores the original status for comparison
+func (r *reconcileContext) SetOldStatus(status *uiv1alpha1.ScalityUIComponentExposerStatus) {
+	r.oldStatus = status
+}
+
+// GetOldStatus returns the original status
+func (r *reconcileContext) GetOldStatus() *uiv1alpha1.ScalityUIComponentExposerStatus {
+	return r.oldStatus
+}
+
 // Type aliases for better readability
 type ScalityUIComponentExposer = *uiv1alpha1.ScalityUIComponentExposer
 type State = reconciler.State
+
+// ExtendedState provides access to additional state beyond the base reconciler.State
+type ExtendedState interface {
+	reconciler.State
+	GetOldStatus() *uiv1alpha1.ScalityUIComponentExposerStatus
+}
 
 // StateReducer represents a step in the reconciliation process
 type StateReducer struct {
