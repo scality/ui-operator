@@ -11,9 +11,11 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -72,6 +74,8 @@ func (r *ScalityUIComponentExposerReconciler) Reconcile(ctx context.Context, req
 		return reconcile.Result{}, err
 	}
 
+	currentState.SetOldStatus(cr.Status.DeepCopy())
+
 	resourceReconcilers := buildReducerList(r, cr, currentState)
 	for _, rr := range resourceReconcilers {
 		res, err := rr.F(cr, currentState, log)
@@ -104,7 +108,11 @@ func (r *ScalityUIComponentExposerReconciler) SetupWithManager(mgr ctrl.Manager)
 		For(&uiv1alpha1.ScalityUIComponentExposer{}).
 		Owns(&networkingv1.Ingress{}).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForConfigMap)).
-		Watches(&uiv1alpha1.ScalityUI{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUI)).
+		Watches(
+			&uiv1alpha1.ScalityUI{},
+			handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUI),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
 		Watches(&uiv1alpha1.ScalityUIComponent{}, handler.EnqueueRequestsFromMapFunc(r.findExposersForScalityUIComponent)).
 		Complete(r)
 }

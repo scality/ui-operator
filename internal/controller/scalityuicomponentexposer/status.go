@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-logr/logr"
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -41,8 +42,18 @@ func setStatusCondition(cr *uiv1alpha1.ScalityUIComponentExposer, conditionType 
 	meta.SetStatusCondition(&cr.Status.Conditions, condition)
 }
 
-// updateStatus updates the ScalityUIComponentExposer status
+// updateStatus updates the ScalityUIComponentExposer status only if it has changed
 func updateStatus(ctx context.Context, cr *uiv1alpha1.ScalityUIComponentExposer, currentState State, log logr.Logger) error {
+	// Check if status actually changed
+	extState, ok := currentState.(ExtendedState)
+	if ok {
+		oldStatus := extState.GetOldStatus()
+		if oldStatus != nil && equality.Semantic.DeepEqual(oldStatus, &cr.Status) {
+			log.V(1).Info("Status unchanged, skipping update", "exposer", cr.Name)
+			return nil
+		}
+	}
+
 	client := currentState.GetKubeClient()
 
 	// Update the status subresource
