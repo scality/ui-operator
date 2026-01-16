@@ -35,7 +35,7 @@ import (
 
 const (
 	MockServerImage       = "mock-server:e2e"
-	MockServerPort        = 8080
+	MockServerPort        = 80
 	MockServerServicePort = 80
 )
 
