@@ -322,7 +322,7 @@ func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Cont
 
 	// Check for force-refresh annotation
 	if scalityUIComponent.Annotations != nil {
-		if val, exists := scalityUIComponent.Annotations[ForceRefreshAnnotation]; exists && val == "true" {
+		if val, exists := scalityUIComponent.Annotations[uiv1alpha1.ForceRefreshAnnotation]; exists && val == "true" {
 			needsFetch = true
 			reasons = append(reasons, "force-refresh annotation present")
 		}
@@ -343,9 +343,8 @@ func (r *ScalityUIComponentReconciler) processUIComponentConfig(ctx context.Cont
 	if err != nil {
 		logger.Error(err, "Failed to fetch micro-app configuration")
 
-		// Set ConfigurationRetrieved=False condition
 		meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
-			Type:    "ConfigurationRetrieved",
+			Type:    ConditionTypeConfigurationRetrieved,
 			Status:  metav1.ConditionFalse,
 			Reason:  "FetchFailed",
 			Message: fmt.Sprintf("Failed to fetch configuration from image %s: %v", currentImage, err),
@@ -372,7 +371,7 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 		logger.Error(err, "Failed to parse micro-app configuration")
 
 		meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
-			Type:    "ConfigurationRetrieved",
+			Type:    ConditionTypeConfigurationRetrieved,
 			Status:  metav1.ConditionFalse,
 			Reason:  "ParseFailed",
 			Message: fmt.Sprintf("Failed to parse configuration from image %s: %v", currentImage, err),
@@ -396,7 +395,7 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 		logger.Error(err, "Invalid micro-app configuration")
 
 		meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
-			Type:    "ConfigurationRetrieved",
+			Type:    ConditionTypeConfigurationRetrieved,
 			Status:  metav1.ConditionFalse,
 			Reason:  "ValidationFailed",
 			Message: fmt.Sprintf("Configuration validation failed for image %s: %v", currentImage, err),
@@ -415,6 +414,11 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
+	existing := meta.FindStatusCondition(scalityUIComponent.Status.Conditions, ConditionTypeConfigurationRetrieved)
+	conditionIsTrue := existing != nil &&
+		existing.Status == metav1.ConditionTrue &&
+		existing.Reason == ConditionReasonFetchSucceeded
+
 	// Check if status actually changed to avoid unnecessary updates
 	statusChanged := false
 	if scalityUIComponent.Status.Kind != config.Metadata.Kind ||
@@ -423,9 +427,13 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 		scalityUIComponent.Status.LastFetchedImage != currentImage {
 		statusChanged = true
 	}
+	if !conditionIsTrue {
+		statusChanged = true
+	}
 
 	if !statusChanged {
-		logger.V(1).Info("Configuration unchanged, skipping status update")
+		logger.V(1).Info("Configuration unchanged, clearing force-refresh annotation")
+		r.removeForceRefreshAnnotation(ctx, scalityUIComponent)
 		return ctrl.Result{}, nil
 	}
 
@@ -448,9 +456,9 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 	}
 
 	meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
-		Type:    "ConfigurationRetrieved",
+		Type:    ConditionTypeConfigurationRetrieved,
 		Status:  metav1.ConditionTrue,
-		Reason:  "FetchSucceeded",
+		Reason:  ConditionReasonFetchSucceeded,
 		Message: conditionMessage,
 	})
 
@@ -480,7 +488,7 @@ func (r *ScalityUIComponentReconciler) removeForceRefreshAnnotation(ctx context.
 		return
 	}
 
-	if _, exists := scalityUIComponent.Annotations[ForceRefreshAnnotation]; !exists {
+	if _, exists := scalityUIComponent.Annotations[uiv1alpha1.ForceRefreshAnnotation]; !exists {
 		return
 	}
 
@@ -499,11 +507,11 @@ func (r *ScalityUIComponentReconciler) removeForceRefreshAnnotation(ctx context.
 			return nil
 		}
 
-		if _, exists := fresh.Annotations[ForceRefreshAnnotation]; !exists {
+		if _, exists := fresh.Annotations[uiv1alpha1.ForceRefreshAnnotation]; !exists {
 			return nil
 		}
 
-		delete(fresh.Annotations, ForceRefreshAnnotation)
+		delete(fresh.Annotations, uiv1alpha1.ForceRefreshAnnotation)
 		return r.Update(ctx, fresh)
 	})
 
