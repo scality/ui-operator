@@ -26,6 +26,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/e2e-framework/klient"
@@ -223,7 +224,10 @@ func WaitForNamespaceDeleted(ctx context.Context, client klient.Client, name str
 	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
 		var ns corev1.Namespace
 		if err := client.Resources().Get(ctx, name, "", &ns); err != nil {
-			return true, nil
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, err
 		}
 		lastPhase = ns.Status.Phase
 		return false, nil
@@ -261,4 +265,90 @@ func formatConditions(conditions []metav1.Condition) string {
 		parts = append(parts, fmt.Sprintf("%s=%s", c.Type, c.Status))
 	}
 	return strings.Join(parts, ",")
+}
+
+func WaitForScalityUIComponentCondition(ctx context.Context, client klient.Client,
+	namespace, name string, conditionType string, expectedStatus metav1.ConditionStatus,
+	timeout time.Duration) error {
+
+	var lastConditions string
+	var lastReason string
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var component uiv1alpha1.ScalityUIComponent
+		if err := client.Resources(namespace).Get(ctx, name, namespace, &component); err != nil {
+			return false, nil
+		}
+
+		lastConditions = formatConditions(component.Status.Conditions)
+
+		for _, cond := range component.Status.Conditions {
+			if cond.Type == conditionType {
+				lastReason = cond.Reason
+				if cond.Status == expectedStatus {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("ScalityUIComponent %s/%s condition %s not %s (reason=%s, conditions=%s): %w",
+			namespace, name, conditionType, expectedStatus, lastReason, lastConditions, err)
+	}
+	return nil
+}
+
+func WaitForScalityUIComponentAnnotationAbsent(ctx context.Context, client klient.Client,
+	namespace, name, annotationKey string, timeout time.Duration) error {
+
+	var lastAnnotations map[string]string
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var component uiv1alpha1.ScalityUIComponent
+		if err := client.Resources(namespace).Get(ctx, name, namespace, &component); err != nil {
+			return false, nil
+		}
+
+		lastAnnotations = component.Annotations
+		if component.Annotations == nil {
+			return true, nil
+		}
+
+		_, exists := component.Annotations[annotationKey]
+		return !exists, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("ScalityUIComponent %s/%s annotation %s still present (annotations=%v): %w",
+			namespace, name, annotationKey, lastAnnotations, err)
+	}
+	return nil
+}
+
+func WaitForMockServerCounter(ctx context.Context, mockClient *MockServerClient,
+	expected int64, timeout time.Duration) error {
+
+	var lastCounter int64
+	var lastErr error
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		counter, err := mockClient.GetCounter(ctx)
+		if err != nil {
+			lastErr = err
+			return false, nil
+		}
+		lastErr = nil
+		lastCounter = counter
+		return counter >= expected, nil
+	})
+
+	if err != nil {
+		if lastErr != nil {
+			return fmt.Errorf("mock server counter did not reach %d (last=%d, lastErr=%v): %w", expected, lastCounter, lastErr, err)
+		}
+		return fmt.Errorf("mock server counter did not reach %d (last=%d): %w", expected, lastCounter, err)
+	}
+	return nil
 }

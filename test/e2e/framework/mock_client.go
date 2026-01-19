@@ -19,27 +19,155 @@ package framework
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
+const curlImage = "curlimages/curl:8.6.0"
+
+func randomString(n int) string {
+	bytes := make([]byte, n)
+	if _, err := rand.Read(bytes); err != nil {
+		return "fallback"
+	}
+	return hex.EncodeToString(bytes)[:n]
+}
+
 type MockServerClient struct {
-	namespace   string
-	serviceName string
-	servicePort int
+	namespace    string
+	serviceName  string
+	servicePort  int
+	curlPodNames map[string]string
+	mu           sync.Mutex
 }
 
 func NewMockServerClient(namespace, serviceName string) *MockServerClient {
 	return &MockServerClient{
-		namespace:   namespace,
-		serviceName: serviceName,
-		servicePort: MockServerServicePort,
+		namespace:    namespace,
+		serviceName:  serviceName,
+		servicePort:  MockServerServicePort,
+		curlPodNames: map[string]string{},
 	}
+}
+
+func (c *MockServerClient) curlPodName(namespace string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if name, ok := c.curlPodNames[namespace]; ok {
+		return name
+	}
+
+	name := fmt.Sprintf("curl-%s", randomString(8))
+	c.curlPodNames[namespace] = name
+	return name
+}
+
+func (c *MockServerClient) ensureCurlPod(ctx context.Context, namespace string) (string, error) {
+	podName := c.curlPodName(namespace)
+
+	if err := c.waitForCurlPodReady(ctx, namespace, podName); err == nil {
+		return podName, nil
+	}
+
+	args := []string{
+		"run", podName,
+		"--image=" + curlImage,
+		"--namespace", namespace,
+		"--restart=Never",
+		"--image-pull-policy=IfNotPresent",
+		"--command",
+		"--",
+		"sleep", "3600",
+	}
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if !strings.Contains(stderr.String(), "AlreadyExists") {
+			return "", fmt.Errorf("failed to create curl pod: %w, stderr: %s", err, stderr.String())
+		}
+	}
+
+	if err := c.waitForCurlPodReady(ctx, namespace, podName); err != nil {
+		return "", err
+	}
+
+	return podName, nil
+}
+
+func (c *MockServerClient) waitForCurlPodReady(ctx context.Context, namespace, podName string) error {
+	args := []string{
+		"wait",
+		"--for=condition=Ready",
+		"pod/" + podName,
+		"--namespace", namespace,
+		"--timeout=30s",
+	}
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("curl pod not ready: %w, stderr: %s", err, stderr.String())
+	}
+	return nil
+}
+
+func (c *MockServerClient) execCurlCommand(ctx context.Context, fromNamespace string, curlArgs []string) (string, error) {
+	podName, err := c.ensureCurlPod(ctx, fromNamespace)
+	if err != nil {
+		return "", err
+	}
+
+	args := []string{"exec", podName, "--namespace", fromNamespace, "--"}
+	args = append(args, curlArgs...)
+
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("curl failed: %w, stderr: %s, stdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+func (c *MockServerClient) CleanupCurlPods(ctx context.Context) error {
+	c.mu.Lock()
+	podNames := make(map[string]string)
+	for k, v := range c.curlPodNames {
+		podNames[k] = v
+	}
+	c.mu.Unlock()
+
+	var lastErr error
+	for namespace, podName := range podNames {
+		args := []string{"delete", "pod", podName, "--namespace", namespace, "--ignore-not-found"}
+		cmd := exec.CommandContext(ctx, "kubectl", args...)
+		if err := cmd.Run(); err != nil {
+			lastErr = err
+		}
+	}
+
+	c.mu.Lock()
+	c.curlPodNames = map[string]string{}
+	c.mu.Unlock()
+
+	return lastErr
 }
 
 func (c *MockServerClient) GetCounter(ctx context.Context) (int64, error) {
@@ -60,6 +188,41 @@ func (c *MockServerClient) GetCounter(ctx context.Context) (int64, error) {
 func (c *MockServerClient) Reset(ctx context.Context) error {
 	_, err := c.execCurl(ctx, "POST", "/_/reset", "")
 	return err
+}
+
+// TestFetch makes a test request to verify the mock server's current response
+// Returns the HTTP status code and response body
+func (c *MockServerClient) TestFetch(ctx context.Context) (int, string, error) {
+	return c.TestFetchFromNamespace(ctx, c.namespace)
+}
+
+// TestFetchFromNamespace makes a test request from a specific namespace
+// This helps diagnose cross-namespace connectivity issues
+func (c *MockServerClient) TestFetchFromNamespace(ctx context.Context, fromNamespace string) (int, string, error) {
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/.well-known/micro-app-configuration",
+		c.serviceName, c.namespace, c.servicePort)
+
+	output, err := c.execCurlCommand(ctx, fromNamespace, []string{"curl", "-s", "-w", "\n%{http_code}", url})
+	if err != nil {
+		return 0, "", err
+	}
+
+	lines := strings.Split(output, "\n")
+	if len(lines) < 2 {
+		return 0, output, fmt.Errorf("unexpected output format: %s", output)
+	}
+
+	// Last line is the status code
+	statusCodeStr := strings.TrimSpace(lines[len(lines)-1])
+	statusCode := 0
+	if _, err := fmt.Sscanf(statusCodeStr, "%d", &statusCode); err != nil {
+		return 0, output, fmt.Errorf("failed to parse status code %q: %w", statusCodeStr, err)
+	}
+
+	// Everything before the last line is the body
+	body := strings.Join(lines[:len(lines)-1], "\n")
+
+	return statusCode, body, nil
 }
 
 func (c *MockServerClient) SetConfig(ctx context.Context, delay int, statusCode int, response string) error {
@@ -98,28 +261,59 @@ func (c *MockServerClient) SetResponse(ctx context.Context, response string) err
 func (c *MockServerClient) execCurl(ctx context.Context, method, path, body string) (string, error) {
 	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s", c.serviceName, c.namespace, c.servicePort, path)
 
-	args := []string{
-		"run", "-i", "--rm", "--restart=Never",
-		"--namespace", c.namespace,
-		"curl-client", "--image=curlimages/curl:latest",
-		"--", "curl", "-s", "-X", method,
-	}
+	curlArgs := []string{"curl", "-s", "-X", method}
 
 	if body != "" {
-		args = append(args, "-H", "Content-Type: application/json", "-d", body)
+		curlArgs = append(curlArgs, "-H", "Content-Type: application/json", "-d", body)
 	}
-	args = append(args, url)
+	curlArgs = append(curlArgs, url)
 
-	cmd := exec.CommandContext(ctx, "kubectl", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	output, err := c.execCurlCommand(ctx, c.namespace, curlArgs)
+	if err != nil {
+		return "", err
+	}
+	output = extractJSON(output)
 
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("curl failed: %w, stderr: %s", err, stderr.String())
+	return output, nil
+}
+
+func extractJSON(s string) string {
+	start := strings.Index(s, "{")
+	if start == -1 {
+		return s
 	}
 
-	return strings.TrimSpace(stdout.String()), nil
+	depth := 0
+	inString := false
+	escape := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if escape {
+			escape = false
+			continue
+		}
+		if c == '\\' && inString {
+			escape = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch c {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	return s[start:]
 }
 
 type MockServerDirectClient struct {
