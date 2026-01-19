@@ -4,6 +4,9 @@ const (
 	// DefaultServicePort is the default port used to connect to the UI component service
 	DefaultServicePort = 80
 
-	// ForceRefreshAnnotation is the annotation key to trigger a force refresh of the configuration
-	ForceRefreshAnnotation = "ui.scality.com/force-refresh"
+	// ConditionTypeConfigurationRetrieved is the condition type for configuration retrieval status
+	ConditionTypeConfigurationRetrieved = "ConfigurationRetrieved"
+
+	// ConditionReasonFetchSucceeded indicates successful configuration fetch
+	ConditionReasonFetchSucceeded = "FetchSucceeded"
 )
