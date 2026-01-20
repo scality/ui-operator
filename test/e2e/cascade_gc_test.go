@@ -28,8 +28,6 @@ import (
 )
 
 const (
-	configVolumePrefix       = "config-volume-"
-	runtimeConfigMapSuffix   = "-runtime-app-configuration"
 	configMapFinalizerPrefix = "uicomponentexposer.scality.com/"
 	configsSubdirectory      = "configs"
 	defaultMountPath         = "/app/config"
@@ -100,7 +98,7 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
 
-			volumeName := configVolumePrefix + componentName
+			volumeName := framework.ConfigVolumePrefix + componentName
 			err := framework.WaitForDeploymentNoVolume(ctx, client, namespace, componentName, volumeName, framework.DefaultTimeout)
 			if err != nil {
 				t.Fatalf("Expected no config volume before exposer: %v", err)
@@ -146,7 +144,7 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
 
-			volumeName := configVolumePrefix + componentName
+			volumeName := framework.ConfigVolumePrefix + componentName
 			if err := framework.WaitForDeploymentHasVolume(ctx, client, namespace, componentName, volumeName, framework.LongTimeout); err != nil {
 				t.Fatalf("Volume not added to deployment: %v", err)
 			}
@@ -273,7 +271,7 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
 
-			volumeName := configVolumePrefix + componentName
+			volumeName := framework.ConfigVolumePrefix + componentName
 			if err := framework.WaitForDeploymentHasVolume(ctx, client, namespace, componentName, volumeName, framework.LongTimeout); err != nil {
 				t.Fatalf("Volume not mounted: %v", err)
 			}
@@ -289,7 +287,7 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
 
-			configMapName := componentName + runtimeConfigMapSuffix
+			configMapName := componentName + framework.RuntimeConfigMapSuffix
 			if err := framework.WaitForConfigMapExists(ctx, client, namespace, configMapName, framework.DefaultTimeout); err != nil {
 				t.Fatalf("ConfigMap not found: %v", err)
 			}
@@ -318,7 +316,7 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
 
-			volumeName := configVolumePrefix + componentName
+			volumeName := framework.ConfigVolumePrefix + componentName
 			if err := framework.WaitForDeploymentNoVolume(ctx, client, namespace, componentName, volumeName, framework.LongTimeout); err != nil {
 				t.Fatalf("Volume not removed: %v", err)
 			}
@@ -330,7 +328,7 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
 
-			configMapName := componentName + runtimeConfigMapSuffix
+			configMapName := componentName + framework.RuntimeConfigMapSuffix
 			finalizer := configMapFinalizerPrefix + exposerName
 
 			if err := framework.WaitForConfigMapNoFinalizer(ctx, client, namespace, configMapName, finalizer, framework.LongTimeout); err != nil {
