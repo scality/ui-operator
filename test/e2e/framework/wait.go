@@ -635,3 +635,154 @@ func WaitForDeploymentAnnotationChange(ctx context.Context, client klient.Client
 	}
 	return newValue, nil
 }
+
+// WaitForDeploymentNoVolume waits for a Deployment to NOT have the specified volume
+func WaitForDeploymentNoVolume(ctx context.Context, client klient.Client,
+	namespace, name, volumeName string, timeout time.Duration) error {
+
+	var foundVolumes []string
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var deployment appsv1.Deployment
+		if err := client.Resources(namespace).Get(ctx, name, namespace, &deployment); err != nil {
+			return false, nil
+		}
+
+		foundVolumes = nil
+		for _, vol := range deployment.Spec.Template.Spec.Volumes {
+			foundVolumes = append(foundVolumes, vol.Name)
+			if vol.Name == volumeName {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("Deployment %s/%s still has volume %s (found=%v): %w",
+			namespace, name, volumeName, foundVolumes, err)
+	}
+	return nil
+}
+
+// WaitForConfigMapDeleted waits for a ConfigMap to be deleted
+func WaitForConfigMapDeleted(ctx context.Context, client klient.Client,
+	namespace, name string, timeout time.Duration) error {
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var cm corev1.ConfigMap
+		if err := client.Resources(namespace).Get(ctx, name, namespace, &cm); err != nil {
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, nil
+		}
+		return false, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("ConfigMap %s/%s was not deleted: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// GetConfigMapFinalizers gets the finalizers from a ConfigMap
+func GetConfigMapFinalizers(ctx context.Context, client klient.Client,
+	namespace, name string) ([]string, error) {
+
+	var cm corev1.ConfigMap
+	if err := client.Resources(namespace).Get(ctx, name, namespace, &cm); err != nil {
+		return nil, fmt.Errorf("failed to get ConfigMap %s/%s: %w", namespace, name, err)
+	}
+	return cm.Finalizers, nil
+}
+
+// WaitForConfigMapHasFinalizer waits for a ConfigMap to have a specific finalizer
+func WaitForConfigMapHasFinalizer(ctx context.Context, client klient.Client,
+	namespace, name, finalizer string, timeout time.Duration) error {
+
+	var lastFinalizers []string
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var cm corev1.ConfigMap
+		if err := client.Resources(namespace).Get(ctx, name, namespace, &cm); err != nil {
+			return false, nil
+		}
+
+		lastFinalizers = cm.Finalizers
+		for _, f := range cm.Finalizers {
+			if f == finalizer {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("ConfigMap %s/%s does not have finalizer %s (found=%v): %w",
+			namespace, name, finalizer, lastFinalizers, err)
+	}
+	return nil
+}
+
+// WaitForConfigMapNoFinalizer waits for a ConfigMap to NOT have a specific finalizer
+func WaitForConfigMapNoFinalizer(ctx context.Context, client klient.Client,
+	namespace, name, finalizer string, timeout time.Duration) error {
+
+	var lastFinalizers []string
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var cm corev1.ConfigMap
+		if err := client.Resources(namespace).Get(ctx, name, namespace, &cm); err != nil {
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, nil
+		}
+
+		lastFinalizers = cm.Finalizers
+		for _, f := range cm.Finalizers {
+			if f == finalizer {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("ConfigMap %s/%s still has finalizer %s (found=%v): %w",
+			namespace, name, finalizer, lastFinalizers, err)
+	}
+	return nil
+}
+
+// WaitForDeploymentHasVolumeMount waits for a Deployment container to have a specific volume mount
+func WaitForDeploymentHasVolumeMount(ctx context.Context, client klient.Client,
+	namespace, deploymentName, volumeName, expectedMountPath string, timeout time.Duration) error {
+
+	var foundMounts []string
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var deployment appsv1.Deployment
+		if err := client.Resources(namespace).Get(ctx, deploymentName, namespace, &deployment); err != nil {
+			return false, nil
+		}
+
+		foundMounts = nil
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			for _, mount := range container.VolumeMounts {
+				foundMounts = append(foundMounts, fmt.Sprintf("%s->%s", mount.Name, mount.MountPath))
+				if mount.Name == volumeName && mount.MountPath == expectedMountPath {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("Deployment %s/%s missing volume mount %s at %s (found=%v): %w",
+			namespace, deploymentName, volumeName, expectedMountPath, foundMounts, err)
+	}
+	return nil
+}
