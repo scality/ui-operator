@@ -352,3 +352,286 @@ func WaitForMockServerCounter(ctx context.Context, mockClient *MockServerClient,
 	}
 	return nil
 }
+
+// GetDeploymentReplicaSets returns all ReplicaSets owned by a Deployment
+func GetDeploymentReplicaSets(ctx context.Context, client klient.Client, namespace, deploymentName string) ([]appsv1.ReplicaSet, error) {
+	var deployment appsv1.Deployment
+	if err := client.Resources(namespace).Get(ctx, deploymentName, namespace, &deployment); err != nil {
+		return nil, fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
+	}
+
+	var rsList appsv1.ReplicaSetList
+	if err := client.Resources(namespace).List(ctx, &rsList); err != nil {
+		return nil, fmt.Errorf("failed to list replicasets in %s: %w", namespace, err)
+	}
+
+	var owned []appsv1.ReplicaSet
+	for _, rs := range rsList.Items {
+		for _, ref := range rs.OwnerReferences {
+			if ref.Kind == "Deployment" && ref.Name == deploymentName {
+				owned = append(owned, rs)
+				break
+			}
+		}
+	}
+	return owned, nil
+}
+
+// GetActiveReplicaSet returns the only active ReplicaSet (replicas > 0) for a Deployment
+// Returns error if there are multiple active ReplicaSets (rolling update in progress)
+func GetActiveReplicaSet(ctx context.Context, client klient.Client, namespace, deploymentName string) (*appsv1.ReplicaSet, error) {
+	rsList, err := GetDeploymentReplicaSets(ctx, client, namespace, deploymentName)
+	if err != nil {
+		return nil, err
+	}
+
+	var activeRS []appsv1.ReplicaSet
+	for _, rs := range rsList {
+		if rs.Status.Replicas > 0 {
+			activeRS = append(activeRS, rs)
+		}
+	}
+
+	if len(activeRS) == 0 {
+		return nil, fmt.Errorf("no active ReplicaSet found for %s/%s", namespace, deploymentName)
+	}
+	if len(activeRS) > 1 {
+		var names []string
+		for _, rs := range activeRS {
+			names = append(names, fmt.Sprintf("%s(replicas=%d)", rs.Name, rs.Status.Replicas))
+		}
+		return nil, fmt.Errorf("multiple active ReplicaSets for %s/%s: %v (rolling update in progress)", namespace, deploymentName, names)
+	}
+
+	return &activeRS[0], nil
+}
+
+// WaitForDeploymentStable waits for a Deployment to have exactly one active ReplicaSet
+func WaitForDeploymentStable(ctx context.Context, client klient.Client, namespace, deploymentName string, timeout time.Duration) (*appsv1.ReplicaSet, error) {
+	var activeRS *appsv1.ReplicaSet
+	var lastErr error
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		rs, err := GetActiveReplicaSet(ctx, client, namespace, deploymentName)
+		if err != nil {
+			lastErr = err
+			return false, nil
+		}
+		activeRS = rs
+		lastErr = nil
+		return true, nil
+	})
+
+	if err != nil {
+		if lastErr != nil {
+			return nil, fmt.Errorf("deployment %s/%s not stable: %v: %w", namespace, deploymentName, lastErr, err)
+		}
+		return nil, fmt.Errorf("deployment %s/%s not stable: %w", namespace, deploymentName, err)
+	}
+	return activeRS, nil
+}
+
+// WaitForNewReplicaSet waits for a new ReplicaSet to be created for a Deployment
+func WaitForNewReplicaSet(ctx context.Context, client klient.Client,
+	namespace, deploymentName string, excludeNames []string, timeout time.Duration) (string, error) {
+
+	excludeSet := make(map[string]bool)
+	for _, name := range excludeNames {
+		excludeSet[name] = true
+	}
+
+	var newRSName string
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		rsList, err := GetDeploymentReplicaSets(ctx, client, namespace, deploymentName)
+		if err != nil {
+			return false, nil
+		}
+
+		for _, rs := range rsList {
+			// Only consider active ReplicaSets (replicas > 0) to avoid returning old scaled-down RS
+			if !excludeSet[rs.Name] && rs.Status.Replicas > 0 {
+				newRSName = rs.Name
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("new ReplicaSet not created for %s/%s (excluded=%v): %w",
+			namespace, deploymentName, excludeNames, err)
+	}
+	return newRSName, nil
+}
+
+// WaitForReplicaSetScaledDown waits for a ReplicaSet to have 0 replicas
+func WaitForReplicaSetScaledDown(ctx context.Context, client klient.Client,
+	namespace, rsName string, timeout time.Duration) error {
+
+	var lastReplicas int32
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var rs appsv1.ReplicaSet
+		if err := client.Resources(namespace).Get(ctx, rsName, namespace, &rs); err != nil {
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, nil
+		}
+
+		lastReplicas = rs.Status.Replicas
+		return rs.Status.Replicas == 0, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("ReplicaSet %s/%s not scaled down (replicas=%d): %w",
+			namespace, rsName, lastReplicas, err)
+	}
+	return nil
+}
+
+// ResourceRef identifies a Kubernetes resource for version tracking
+type ResourceRef struct {
+	Kind      string
+	Namespace string
+	Name      string
+}
+
+// GetResourceVersion gets the ResourceVersion of a single resource
+func GetResourceVersion(ctx context.Context, client klient.Client, ref ResourceRef) (string, error) {
+	switch ref.Kind {
+	case "Deployment":
+		var obj appsv1.Deployment
+		if err := client.Resources(ref.Namespace).Get(ctx, ref.Name, ref.Namespace, &obj); err != nil {
+			return "", err
+		}
+		return obj.ResourceVersion, nil
+	case "Service":
+		var obj corev1.Service
+		if err := client.Resources(ref.Namespace).Get(ctx, ref.Name, ref.Namespace, &obj); err != nil {
+			return "", err
+		}
+		return obj.ResourceVersion, nil
+	case "ConfigMap":
+		var obj corev1.ConfigMap
+		if err := client.Resources(ref.Namespace).Get(ctx, ref.Name, ref.Namespace, &obj); err != nil {
+			return "", err
+		}
+		return obj.ResourceVersion, nil
+	default:
+		return "", fmt.Errorf("unsupported resource kind: %s", ref.Kind)
+	}
+}
+
+// GetResourceVersions gets ResourceVersions for multiple resources
+func GetResourceVersions(ctx context.Context, client klient.Client, refs []ResourceRef) (map[string]string, error) {
+	result := make(map[string]string)
+	for _, ref := range refs {
+		key := fmt.Sprintf("%s/%s/%s", ref.Kind, ref.Namespace, ref.Name)
+		version, err := GetResourceVersion(ctx, client, ref)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get version for %s: %w", key, err)
+		}
+		result[key] = version
+	}
+	return result, nil
+}
+
+// DeleteOperatorPod deletes the operator pod and waits for a new one to be running
+func DeleteOperatorPod(ctx context.Context, client klient.Client, timeout time.Duration) error {
+	var pods corev1.PodList
+	if err := client.Resources(OperatorNamespace).List(ctx, &pods); err != nil {
+		return fmt.Errorf("failed to list pods in %s: %w", OperatorNamespace, err)
+	}
+
+	var operatorPod *corev1.Pod
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if val, ok := pod.Labels[ControlPlaneLabel]; ok && val == ControlPlaneValue {
+			operatorPod = pod
+			break
+		}
+	}
+
+	if operatorPod == nil {
+		return fmt.Errorf("operator pod not found in %s", OperatorNamespace)
+	}
+
+	oldPodName := operatorPod.Name
+
+	if err := client.Resources(OperatorNamespace).Delete(ctx, operatorPod); err != nil {
+		return fmt.Errorf("failed to delete operator pod %s: %w", oldPodName, err)
+	}
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var pods corev1.PodList
+		if err := client.Resources(OperatorNamespace).List(ctx, &pods); err != nil {
+			return false, nil
+		}
+
+		for i := range pods.Items {
+			pod := &pods.Items[i]
+			if val, ok := pod.Labels[ControlPlaneLabel]; ok && val == ControlPlaneValue {
+				if pod.Name != oldPodName && pod.Status.Phase == corev1.PodRunning {
+					allReady := true
+					for _, cs := range pod.Status.ContainerStatuses {
+						if !cs.Ready {
+							allReady = false
+							break
+						}
+					}
+					if allReady {
+						return true, nil
+					}
+				}
+			}
+		}
+		return false, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("new operator pod not running after deleting %s: %w", oldPodName, err)
+	}
+	return nil
+}
+
+// GetDeploymentPodTemplateHash gets the hash annotation from a Deployment's pod template
+func GetDeploymentPodTemplateHash(ctx context.Context, client klient.Client,
+	namespace, name, annotationKey string) (string, error) {
+
+	var deployment appsv1.Deployment
+	if err := client.Resources(namespace).Get(ctx, name, namespace, &deployment); err != nil {
+		return "", fmt.Errorf("failed to get deployment %s/%s: %w", namespace, name, err)
+	}
+
+	if deployment.Spec.Template.Annotations == nil {
+		return "", nil
+	}
+	return deployment.Spec.Template.Annotations[annotationKey], nil
+}
+
+// WaitForDeploymentAnnotationChange waits for a Deployment's pod template annotation to change
+func WaitForDeploymentAnnotationChange(ctx context.Context, client klient.Client,
+	namespace, name, annotationKey, oldValue string, timeout time.Duration) (string, error) {
+
+	var newValue string
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var deployment appsv1.Deployment
+		if err := client.Resources(namespace).Get(ctx, name, namespace, &deployment); err != nil {
+			return false, nil
+		}
+
+		if deployment.Spec.Template.Annotations == nil {
+			return false, nil
+		}
+
+		newValue = deployment.Spec.Template.Annotations[annotationKey]
+		return newValue != "" && newValue != oldValue, nil
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("deployment %s/%s annotation %s did not change from %s: %w",
+			namespace, name, annotationKey, oldValue, err)
+	}
+	return newValue, nil
+}
