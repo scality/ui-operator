@@ -29,6 +29,28 @@ jobs:
 
       - name: Run tests
         run: make test
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [test]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go with private modules
+        uses: ./.github/actions/setup-go-private
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          gh-token: ${{ secrets.GH_PAT }}
+
+      - name: Install Kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Run E2E tests
+        run: make test-e2e
 
   build:
     uses: ./.github/workflows/docker.yml

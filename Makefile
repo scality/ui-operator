@@ -144,7 +144,7 @@ test: manifests generate fmt vet envtest ## Run tests.
 # Run the e2e tests using e2e-framework (auto-creates Kind cluster)
 .PHONY: test-e2e
 test-e2e: ## Run e2e tests against a Kind cluster (auto-created)
-	go test ./test/e2e/... -v -timeout 30m
+	go test ./test/e2e/... -v -timeout 10m
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
