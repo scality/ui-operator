@@ -61,10 +61,6 @@ func NewScalityUIComponentExposerReconcilerForTest(client client.Client, scheme 
 func (r *ScalityUIComponentExposerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	currentState := newReconcileContextWithCtx(ctx)
-	currentState.SetLog(log)
-	currentState.SetKubeClient(r.Client)
-
 	cr := &uiv1alpha1.ScalityUIComponentExposer{}
 	err := r.Client.Get(ctx, req.NamespacedName, cr)
 	if err != nil {
@@ -74,6 +70,27 @@ func (r *ScalityUIComponentExposerReconciler) Reconcile(ctx context.Context, req
 		return reconcile.Result{}, err
 	}
 
+	// Handle deletion
+	if isBeingDeleted(cr) {
+		return r.handleDeletion(ctx, cr, log)
+	}
+
+	// Ensure finalizer is present for cleanup on deletion
+	finalizerAdded, err := r.ensureFinalizer(ctx, cr, log)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Re-fetch the CR only if finalizer was added (object was modified)
+	if finalizerAdded {
+		if err := r.Client.Get(ctx, req.NamespacedName, cr); err != nil {
+			return reconcile.Result{}, err
+		}
+	}
+
+	currentState := newReconcileContextWithCtx(ctx)
+	currentState.SetLog(log)
+	currentState.SetKubeClient(r.Client)
 	currentState.SetOldStatus(cr.Status.DeepCopy())
 
 	resourceReconcilers := buildReducerList(r, cr, currentState)
