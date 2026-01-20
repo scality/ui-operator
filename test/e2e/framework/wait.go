@@ -18,6 +18,7 @@ package framework
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -783,6 +784,125 @@ func WaitForDeploymentHasVolumeMount(ctx context.Context, client klient.Client,
 	if err != nil {
 		return fmt.Errorf("Deployment %s/%s missing volume mount %s at %s (found=%v): %w",
 			namespace, deploymentName, volumeName, expectedMountPath, foundMounts, err)
+	}
+	return nil
+}
+
+type DeployedApp struct {
+	AppHistoryBasePath string `json:"appHistoryBasePath"`
+	Kind               string `json:"kind"`
+	Name               string `json:"name"`
+	URL                string `json:"url"`
+	Version            string `json:"version"`
+}
+
+const deployedUIAppsKey = "deployed-ui-apps.json"
+
+func GetDeployedApps(ctx context.Context, client klient.Client, scalityUIName string) ([]DeployedApp, error) {
+	configMapName := scalityUIName + "-deployed-ui-apps"
+
+	var cm corev1.ConfigMap
+	if err := client.Resources(OperatorNamespace).Get(ctx, configMapName, OperatorNamespace, &cm); err != nil {
+		return nil, fmt.Errorf("failed to get deployed-ui-apps ConfigMap %s/%s: %w",
+			OperatorNamespace, configMapName, err)
+	}
+
+	jsonData, ok := cm.Data[deployedUIAppsKey]
+	if !ok {
+		return nil, fmt.Errorf("ConfigMap %s/%s missing key %s",
+			OperatorNamespace, configMapName, deployedUIAppsKey)
+	}
+
+	var apps []DeployedApp
+	if err := json.Unmarshal([]byte(jsonData), &apps); err != nil {
+		return nil, fmt.Errorf("failed to parse deployed-ui-apps JSON: %w", err)
+	}
+
+	return apps, nil
+}
+
+func WaitForDeployedAppsContains(ctx context.Context, client klient.Client,
+	scalityUIName, componentName string, timeout time.Duration) error {
+
+	var lastApps []string
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		apps, err := GetDeployedApps(ctx, client, scalityUIName)
+		if err != nil {
+			return false, nil
+		}
+
+		lastApps = nil
+		for _, app := range apps {
+			lastApps = append(lastApps, app.Name)
+			if app.Name == componentName {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("deployed-apps for %s does not contain %s (found=%v): %w",
+			scalityUIName, componentName, lastApps, err)
+	}
+	return nil
+}
+
+func WaitForDeployedAppsNotContains(ctx context.Context, client klient.Client,
+	scalityUIName, componentName string, timeout time.Duration) error {
+
+	var lastApps []string
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		apps, err := GetDeployedApps(ctx, client, scalityUIName)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, nil
+		}
+
+		lastApps = nil
+		for _, app := range apps {
+			lastApps = append(lastApps, app.Name)
+			if app.Name == componentName {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("deployed-apps for %s still contains %s (apps=%v): %w",
+			scalityUIName, componentName, lastApps, err)
+	}
+	return nil
+}
+
+func WaitForDeployedAppsCount(ctx context.Context, client klient.Client,
+	scalityUIName string, expectedCount int, timeout time.Duration) error {
+
+	var lastCount int
+	var lastApps []string
+
+	err := wait.PollUntilContextTimeout(ctx, DefaultPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		apps, err := GetDeployedApps(ctx, client, scalityUIName)
+		if err != nil {
+			return false, nil
+		}
+
+		lastCount = len(apps)
+		lastApps = nil
+		for _, app := range apps {
+			lastApps = append(lastApps, app.Name)
+		}
+		return lastCount == expectedCount, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("deployed-apps for %s count mismatch: expected %d, got %d (apps=%v): %w",
+			scalityUIName, expectedCount, lastCount, lastApps, err)
 	}
 	return nil
 }
