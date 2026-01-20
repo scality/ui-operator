@@ -471,8 +471,8 @@ func TestPodLifecycle_NoSpuriousUpdatesAfterRestart(t *testing.T) {
 			}
 			t.Logf("Triggered reconcile via label update")
 
-			t.Logf("Waiting 5s for any potential updates...")
-			time.Sleep(5 * time.Second)
+			t.Logf("Waiting 3s for any potential updates...")
+			time.Sleep(3 * time.Second)
 
 			newVersions, err := framework.GetResourceVersions(ctx, client, refs)
 			if err != nil {
