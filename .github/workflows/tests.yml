@@ -74,5 +74,5 @@ jobs:
       - name: Run E2E tests
         run: make test-e2e
         env:
-          E2E_SKIP_BUILD: "true"
+          E2E_SKIP_OPERATOR_BUILD: "true"
           E2E_OPERATOR_IMAGE: "ghcr.io/${{ github.repository }}:${{ github.sha }}"

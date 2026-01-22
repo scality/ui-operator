@@ -195,8 +195,8 @@ func DeployOperatorSetup(clusterName string) func(ctx context.Context, cfg *envc
 
 		image := GetOperatorImage()
 
-		if SkipBuild() {
-			fmt.Printf("Skipping image build (E2E_SKIP_BUILD=true), using existing image: %s\n", image)
+		if SkipBuild() || SkipOperatorBuild() {
+			fmt.Printf("Skipping operator image build, using existing image: %s\n", image)
 		} else {
 			fmt.Printf("Building operator image: %s\n", image)
 			if err := BuildOperatorImage(projectRoot, image); err != nil {
