@@ -99,3 +99,23 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           subject-name: ghcr.io/${{ github.repository }}
           push-to-registry: true
+
+      - name: Output image info to summary
+        if: ${{ inputs.push-image }}
+        run: |
+          IMAGE_TAG="${{ inputs.version || github.sha }}"
+          IMAGE_FULL="ghcr.io/${{ github.repository }}:${IMAGE_TAG}"
+          
+          echo "## Docker Image" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Image pushed to registry:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${IMAGE_FULL}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Pull command:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${IMAGE_FULL}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
