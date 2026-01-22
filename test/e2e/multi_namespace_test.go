@@ -30,27 +30,31 @@ import (
 type multiNamespaceContextKey string
 
 const (
-	multiNamespaceNSAKey multiNamespaceContextKey = "multi-ns-a"
-	multiNamespaceNSBKey multiNamespaceContextKey = "multi-ns-b"
+	multiNamespaceNSAKey       multiNamespaceContextKey = "multi-ns-a"
+	multiNamespaceNSBKey       multiNamespaceContextKey = "multi-ns-b"
+	multiNamespaceScalityUIKey multiNamespaceContextKey = "multi-ns-scalityui"
+	multiNamespaceCompA1Key    multiNamespaceContextKey = "multi-ns-comp-a1"
+	multiNamespaceCompA2Key    multiNamespaceContextKey = "multi-ns-comp-a2"
+	multiNamespaceCompB1Key    multiNamespaceContextKey = "multi-ns-comp-b1"
+	multiNamespaceExpA1Key     multiNamespaceContextKey = "multi-ns-exp-a1"
+	multiNamespaceExpA2Key     multiNamespaceContextKey = "multi-ns-exp-a2"
+	multiNamespaceExpB1Key     multiNamespaceContextKey = "multi-ns-exp-b1"
 )
 
 func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
-	const (
-		scalityUIName = "multi-ns-aggregation-ui"
-		compA1Name    = "comp-a1"
-		compA2Name    = "comp-a2"
-		compB1Name    = "comp-b1"
-		expA1Name     = "exp-a1"
-		expA2Name     = "exp-a2"
-		expB1Name     = "exp-b1"
-	)
-
 	feature := features.New("multi-namespace-components-aggregation").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 
 			nsA := envconf.RandomName("multi-ns-a", 16)
 			nsB := envconf.RandomName("multi-ns-b", 16)
+			scalityUIName := envconf.RandomName("multi-ns-agg-ui", 24)
+			compA1Name := envconf.RandomName("comp-a1", 16)
+			compA2Name := envconf.RandomName("comp-a2", 16)
+			compB1Name := envconf.RandomName("comp-b1", 16)
+			expA1Name := envconf.RandomName("exp-a1", 16)
+			expA2Name := envconf.RandomName("exp-a2", 16)
+			expB1Name := envconf.RandomName("exp-b1", 16)
 
 			for _, nsName := range []string{nsA, nsB} {
 				ns := &corev1.Namespace{
@@ -64,10 +68,18 @@ func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
 
 			ctx = context.WithValue(ctx, multiNamespaceNSAKey, nsA)
 			ctx = context.WithValue(ctx, multiNamespaceNSBKey, nsB)
+			ctx = context.WithValue(ctx, multiNamespaceScalityUIKey, scalityUIName)
+			ctx = context.WithValue(ctx, multiNamespaceCompA1Key, compA1Name)
+			ctx = context.WithValue(ctx, multiNamespaceCompA2Key, compA2Name)
+			ctx = context.WithValue(ctx, multiNamespaceCompB1Key, compB1Name)
+			ctx = context.WithValue(ctx, multiNamespaceExpA1Key, expA1Name)
+			ctx = context.WithValue(ctx, multiNamespaceExpA2Key, expA2Name)
+			ctx = context.WithValue(ctx, multiNamespaceExpB1Key, expB1Name)
 			return ctx
 		}).
 		Assess("create ScalityUI", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
+			scalityUIName := ctx.Value(multiNamespaceScalityUIKey).(string)
 
 			if err := framework.NewScalityUIBuilder(scalityUIName).
 				WithProductName("Multi-Namespace Aggregation Test").
@@ -86,6 +98,8 @@ func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
 		Assess("create 2 Components in ns-a", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			nsA := ctx.Value(multiNamespaceNSAKey).(string)
+			compA1Name := ctx.Value(multiNamespaceCompA1Key).(string)
+			compA2Name := ctx.Value(multiNamespaceCompA2Key).(string)
 
 			for _, compName := range []string{compA1Name, compA2Name} {
 				if err := framework.NewScalityUIComponentBuilder(compName, nsA).
@@ -110,6 +124,7 @@ func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
 		Assess("create 1 Component in ns-b", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			nsB := ctx.Value(multiNamespaceNSBKey).(string)
+			compB1Name := ctx.Value(multiNamespaceCompB1Key).(string)
 
 			if err := framework.NewScalityUIComponentBuilder(compB1Name, nsB).
 				WithImage(framework.MockServerImage).
@@ -132,6 +147,11 @@ func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
 		Assess("create 2 Exposers in ns-a", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			nsA := ctx.Value(multiNamespaceNSAKey).(string)
+			scalityUIName := ctx.Value(multiNamespaceScalityUIKey).(string)
+			compA1Name := ctx.Value(multiNamespaceCompA1Key).(string)
+			compA2Name := ctx.Value(multiNamespaceCompA2Key).(string)
+			expA1Name := ctx.Value(multiNamespaceExpA1Key).(string)
+			expA2Name := ctx.Value(multiNamespaceExpA2Key).(string)
 
 			exposers := []struct {
 				name      string
@@ -163,6 +183,9 @@ func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
 		Assess("create 1 Exposer in ns-b", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			nsB := ctx.Value(multiNamespaceNSBKey).(string)
+			scalityUIName := ctx.Value(multiNamespaceScalityUIKey).(string)
+			compB1Name := ctx.Value(multiNamespaceCompB1Key).(string)
+			expB1Name := ctx.Value(multiNamespaceExpB1Key).(string)
 
 			if err := framework.NewScalityUIComponentExposerBuilder(expB1Name, nsB).
 				WithScalityUI(scalityUIName).
@@ -182,6 +205,10 @@ func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
 		}).
 		Assess("verify deployed-apps contains all 3 components", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
+			scalityUIName := ctx.Value(multiNamespaceScalityUIKey).(string)
+			compA1Name := ctx.Value(multiNamespaceCompA1Key).(string)
+			compA2Name := ctx.Value(multiNamespaceCompA2Key).(string)
+			compB1Name := ctx.Value(multiNamespaceCompB1Key).(string)
 
 			if err := framework.WaitForDeployedAppsCount(ctx, client, scalityUIName, 3, framework.LongTimeout); err != nil {
 				t.Fatalf("Deployed-apps count mismatch: %v", err)
@@ -225,6 +252,9 @@ func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
 			client := cfg.Client()
 			nsA := ctx.Value(multiNamespaceNSAKey).(string)
 			nsB := ctx.Value(multiNamespaceNSBKey).(string)
+			compA1Name := ctx.Value(multiNamespaceCompA1Key).(string)
+			compA2Name := ctx.Value(multiNamespaceCompA2Key).(string)
+			compB1Name := ctx.Value(multiNamespaceCompB1Key).(string)
 
 			nsAConfigMaps := []string{
 				compA1Name + framework.RuntimeConfigMapSuffix,
@@ -249,6 +279,7 @@ func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
 			client := cfg.Client()
 			nsA := ctx.Value(multiNamespaceNSAKey).(string)
 			nsB := ctx.Value(multiNamespaceNSBKey).(string)
+			scalityUIName := ctx.Value(multiNamespaceScalityUIKey).(string)
 
 			if err := framework.DeleteScalityUI(ctx, client, scalityUIName); err != nil {
 				t.Logf("Warning: Failed to delete ScalityUI: %v", err)
@@ -273,22 +304,19 @@ func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
 }
 
 func TestMultiNamespace_PartialNamespaceDeletion(t *testing.T) {
-	const (
-		scalityUIName = "multi-ns-partial-del-ui"
-		compA1Name    = "comp-a1"
-		compA2Name    = "comp-a2"
-		compB1Name    = "comp-b1"
-		expA1Name     = "exp-a1"
-		expA2Name     = "exp-a2"
-		expB1Name     = "exp-b1"
-	)
-
 	feature := features.New("multi-namespace-partial-deletion").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 
 			nsA := envconf.RandomName("partial-ns-a", 16)
 			nsB := envconf.RandomName("partial-ns-b", 16)
+			scalityUIName := envconf.RandomName("partial-del-ui", 24)
+			compA1Name := envconf.RandomName("comp-a1", 16)
+			compA2Name := envconf.RandomName("comp-a2", 16)
+			compB1Name := envconf.RandomName("comp-b1", 16)
+			expA1Name := envconf.RandomName("exp-a1", 16)
+			expA2Name := envconf.RandomName("exp-a2", 16)
+			expB1Name := envconf.RandomName("exp-b1", 16)
 
 			for _, nsName := range []string{nsA, nsB} {
 				ns := &corev1.Namespace{
@@ -302,10 +330,18 @@ func TestMultiNamespace_PartialNamespaceDeletion(t *testing.T) {
 
 			ctx = context.WithValue(ctx, multiNamespaceNSAKey, nsA)
 			ctx = context.WithValue(ctx, multiNamespaceNSBKey, nsB)
+			ctx = context.WithValue(ctx, multiNamespaceScalityUIKey, scalityUIName)
+			ctx = context.WithValue(ctx, multiNamespaceCompA1Key, compA1Name)
+			ctx = context.WithValue(ctx, multiNamespaceCompA2Key, compA2Name)
+			ctx = context.WithValue(ctx, multiNamespaceCompB1Key, compB1Name)
+			ctx = context.WithValue(ctx, multiNamespaceExpA1Key, expA1Name)
+			ctx = context.WithValue(ctx, multiNamespaceExpA2Key, expA2Name)
+			ctx = context.WithValue(ctx, multiNamespaceExpB1Key, expB1Name)
 			return ctx
 		}).
 		Assess("create ScalityUI", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
+			scalityUIName := ctx.Value(multiNamespaceScalityUIKey).(string)
 
 			if err := framework.NewScalityUIBuilder(scalityUIName).
 				WithProductName("Multi-Namespace Partial Deletion Test").
@@ -325,6 +361,13 @@ func TestMultiNamespace_PartialNamespaceDeletion(t *testing.T) {
 			client := cfg.Client()
 			nsA := ctx.Value(multiNamespaceNSAKey).(string)
 			nsB := ctx.Value(multiNamespaceNSBKey).(string)
+			scalityUIName := ctx.Value(multiNamespaceScalityUIKey).(string)
+			compA1Name := ctx.Value(multiNamespaceCompA1Key).(string)
+			compA2Name := ctx.Value(multiNamespaceCompA2Key).(string)
+			compB1Name := ctx.Value(multiNamespaceCompB1Key).(string)
+			expA1Name := ctx.Value(multiNamespaceExpA1Key).(string)
+			expA2Name := ctx.Value(multiNamespaceExpA2Key).(string)
+			expB1Name := ctx.Value(multiNamespaceExpB1Key).(string)
 
 			nsAComponents := []string{compA1Name, compA2Name}
 			for _, compName := range nsAComponents {
@@ -404,6 +447,7 @@ func TestMultiNamespace_PartialNamespaceDeletion(t *testing.T) {
 		}).
 		Assess("verify deployed-apps contains all 3 components", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
+			scalityUIName := ctx.Value(multiNamespaceScalityUIKey).(string)
 
 			if err := framework.WaitForDeployedAppsCount(ctx, client, scalityUIName, 3, framework.LongTimeout); err != nil {
 				t.Fatalf("Deployed-apps count mismatch: %v", err)
@@ -445,6 +489,10 @@ func TestMultiNamespace_PartialNamespaceDeletion(t *testing.T) {
 		}).
 		Assess("verify deployed-apps updated correctly", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
+			scalityUIName := ctx.Value(multiNamespaceScalityUIKey).(string)
+			compA1Name := ctx.Value(multiNamespaceCompA1Key).(string)
+			compA2Name := ctx.Value(multiNamespaceCompA2Key).(string)
+			compB1Name := ctx.Value(multiNamespaceCompB1Key).(string)
 
 			if err := framework.WaitForDeployedAppsCount(ctx, client, scalityUIName, 1, framework.LongTimeout); err != nil {
 				t.Fatalf("Deployed-apps count should be 1 after ns-a deletion: %v", err)
@@ -474,6 +522,8 @@ func TestMultiNamespace_PartialNamespaceDeletion(t *testing.T) {
 		Assess("verify ns-b resources unaffected", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			nsB := ctx.Value(multiNamespaceNSBKey).(string)
+			compB1Name := ctx.Value(multiNamespaceCompB1Key).(string)
+			expB1Name := ctx.Value(multiNamespaceExpB1Key).(string)
 
 			if err := framework.WaitForDeploymentReady(ctx, client, nsB, compB1Name, framework.DefaultTimeout); err != nil {
 				t.Fatalf("Component %s deployment in ns-b should still be ready: %v", compB1Name, err)
@@ -497,6 +547,7 @@ func TestMultiNamespace_PartialNamespaceDeletion(t *testing.T) {
 			client := cfg.Client()
 			nsA := ctx.Value(multiNamespaceNSAKey).(string)
 			nsB := ctx.Value(multiNamespaceNSBKey).(string)
+			scalityUIName := ctx.Value(multiNamespaceScalityUIKey).(string)
 
 			if err := framework.DeleteScalityUI(ctx, client, scalityUIName); err != nil {
 				t.Logf("Warning: Failed to delete ScalityUI: %v", err)

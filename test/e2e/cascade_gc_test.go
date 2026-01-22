@@ -35,19 +35,21 @@ const (
 
 type cascadeGCContextKey string
 
-const cascadeGCNamespaceKey cascadeGCContextKey = "cascade-gc-namespace"
+const (
+	cascadeGCNamespaceKey cascadeGCContextKey = "cascade-gc-namespace"
+	cascadeGCScalityUIKey cascadeGCContextKey = "cascade-gc-scalityui"
+	cascadeGCComponentKey cascadeGCContextKey = "cascade-gc-component"
+	cascadeGCExposerKey   cascadeGCContextKey = "cascade-gc-exposer"
+)
 
 func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
-	const (
-		scalityUIName = "cascade-update-ui"
-		componentName = "cascade-update-component"
-		exposerName   = "cascade-update-exposer"
-	)
-
 	feature := features.New("exposer-updates-component").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			testNamespace := envconf.RandomName("cascade-update", 16)
+			scalityUIName := envconf.RandomName("cascade-update-ui", 24)
+			componentName := envconf.RandomName("cascade-update-comp", 24)
+			exposerName := envconf.RandomName("cascade-update-exp", 24)
 
 			ns := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{Name: testNamespace},
@@ -58,11 +60,16 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 			t.Logf("Created namespace %s", testNamespace)
 
 			ctx = context.WithValue(ctx, cascadeGCNamespaceKey, testNamespace)
+			ctx = context.WithValue(ctx, cascadeGCScalityUIKey, scalityUIName)
+			ctx = context.WithValue(ctx, cascadeGCComponentKey, componentName)
+			ctx = context.WithValue(ctx, cascadeGCExposerKey, exposerName)
 			return ctx
 		}).
 		Assess("create ScalityUI and Component without exposer", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			scalityUIName := ctx.Value(cascadeGCScalityUIKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
 
 			if err := framework.NewScalityUIBuilder(scalityUIName).
 				WithProductName("Cascade Update Test").
@@ -97,6 +104,7 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 		Assess("verify no config volume before exposer", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
 
 			volumeName := framework.ConfigVolumePrefix + componentName
 			err := framework.WaitForDeploymentNoVolume(ctx, client, namespace, componentName, volumeName, framework.DefaultTimeout)
@@ -110,6 +118,7 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 		Assess("record initial ReplicaSet", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
 
 			activeRS, err := framework.WaitForDeploymentStable(ctx, client, namespace, componentName, framework.LongTimeout)
 			if err != nil {
@@ -123,6 +132,9 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 		Assess("create exposer", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			scalityUIName := ctx.Value(cascadeGCScalityUIKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
+			exposerName := ctx.Value(cascadeGCExposerKey).(string)
 
 			if err := framework.NewScalityUIComponentExposerBuilder(exposerName, namespace).
 				WithScalityUI(scalityUIName).
@@ -143,6 +155,7 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 		Assess("verify volume added to deployment", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
 
 			volumeName := framework.ConfigVolumePrefix + componentName
 			if err := framework.WaitForDeploymentHasVolume(ctx, client, namespace, componentName, volumeName, framework.LongTimeout); err != nil {
@@ -161,6 +174,7 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 		Assess("verify new ReplicaSet created (rolling update)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
 			initialRSName := ctx.Value(cascadeGCContextKey("initial-rs-name")).(string)
 
 			newRSName, err := framework.WaitForNewReplicaSet(ctx, client, namespace, componentName, []string{initialRSName}, framework.LongTimeout)
@@ -179,6 +193,7 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			scalityUIName := ctx.Value(cascadeGCScalityUIKey).(string)
 
 			if err := framework.DeleteScalityUI(ctx, client, scalityUIName); err != nil {
 				t.Logf("Warning: Failed to delete ScalityUI: %v", err)
@@ -199,16 +214,13 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 }
 
 func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
-	const (
-		scalityUIName = "cascade-delete-ui"
-		componentName = "cascade-delete-component"
-		exposerName   = "cascade-delete-exposer"
-	)
-
 	feature := features.New("exposer-deletion-cleanup").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			testNamespace := envconf.RandomName("cascade-delete", 16)
+			scalityUIName := envconf.RandomName("cascade-delete-ui", 24)
+			componentName := envconf.RandomName("cascade-delete-comp", 24)
+			exposerName := envconf.RandomName("cascade-delete-exp", 24)
 
 			ns := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{Name: testNamespace},
@@ -219,11 +231,17 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 			t.Logf("Created namespace %s", testNamespace)
 
 			ctx = context.WithValue(ctx, cascadeGCNamespaceKey, testNamespace)
+			ctx = context.WithValue(ctx, cascadeGCScalityUIKey, scalityUIName)
+			ctx = context.WithValue(ctx, cascadeGCComponentKey, componentName)
+			ctx = context.WithValue(ctx, cascadeGCExposerKey, exposerName)
 			return ctx
 		}).
 		Assess("create full resource chain", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			scalityUIName := ctx.Value(cascadeGCScalityUIKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
+			exposerName := ctx.Value(cascadeGCExposerKey).(string)
 
 			if err := framework.NewScalityUIBuilder(scalityUIName).
 				WithProductName("Cascade Delete Test").
@@ -270,6 +288,7 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 		Assess("wait for stable state with volume mounted", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
 
 			volumeName := framework.ConfigVolumePrefix + componentName
 			if err := framework.WaitForDeploymentHasVolume(ctx, client, namespace, componentName, volumeName, framework.LongTimeout); err != nil {
@@ -286,6 +305,8 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 		Assess("verify ConfigMap exists with finalizer", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
+			exposerName := ctx.Value(cascadeGCExposerKey).(string)
 
 			configMapName := componentName + framework.RuntimeConfigMapSuffix
 			if err := framework.WaitForConfigMapExists(ctx, client, namespace, configMapName, framework.DefaultTimeout); err != nil {
@@ -304,6 +325,7 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 		Assess("delete exposer", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			exposerName := ctx.Value(cascadeGCExposerKey).(string)
 
 			if err := framework.DeleteScalityUIComponentExposer(ctx, client, namespace, exposerName); err != nil {
 				t.Fatalf("Failed to delete exposer: %v", err)
@@ -315,6 +337,7 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 		Assess("verify volume removed from deployment", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
 
 			volumeName := framework.ConfigVolumePrefix + componentName
 			if err := framework.WaitForDeploymentNoVolume(ctx, client, namespace, componentName, volumeName, framework.LongTimeout); err != nil {
@@ -327,6 +350,8 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 		Assess("verify ConfigMap finalizer removed and ConfigMap deleted", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			componentName := ctx.Value(cascadeGCComponentKey).(string)
+			exposerName := ctx.Value(cascadeGCExposerKey).(string)
 
 			configMapName := componentName + framework.RuntimeConfigMapSuffix
 			finalizer := configMapFinalizerPrefix + exposerName
@@ -346,6 +371,7 @@ func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(cascadeGCNamespaceKey).(string)
+			scalityUIName := ctx.Value(cascadeGCScalityUIKey).(string)
 
 			if err := framework.DeleteScalityUI(ctx, client, scalityUIName); err != nil {
 				t.Logf("Warning: Failed to delete ScalityUI: %v", err)

@@ -142,9 +142,19 @@ test: manifests generate fmt vet envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Run the e2e tests using e2e-framework (auto-creates Kind cluster)
+# Note: Tests with 'disruptive' label (OperatorCrashRecovery, NoSpuriousUpdatesAfterRestart)
+#       restart the operator pod and should not run in parallel with other tests.
 .PHONY: test-e2e
-test-e2e: ## Run e2e tests against a Kind cluster (auto-created)
-	go test ./test/e2e/... -v -timeout 15m
+test-e2e: ## Run all e2e tests against a Kind cluster (auto-created)
+	go test ./test/e2e/... -v -timeout 20m
+
+.PHONY: test-e2e-safe
+test-e2e-safe: ## Run only parallel-safe e2e tests (excludes operator restart tests)
+	go test ./test/e2e/... -v -timeout 15m -skip 'TestPodLifecycle_OperatorCrashRecovery|TestPodLifecycle_NoSpuriousUpdatesAfterRestart'
+
+.PHONY: test-e2e-disruptive
+test-e2e-disruptive: ## Run only disruptive e2e tests (operator restart tests)
+	go test ./test/e2e/... -v -timeout 10m -run 'TestPodLifecycle_OperatorCrashRecovery|TestPodLifecycle_NoSpuriousUpdatesAfterRestart'
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

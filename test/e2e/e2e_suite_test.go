@@ -31,7 +31,8 @@ import (
 var testenv env.Environment
 
 func TestMain(m *testing.M) {
-	testenv = env.New()
+	cfg := envconf.New().WithParallelTestEnabled()
+	testenv = env.NewWithConfig(cfg)
 	kindClusterName := envconf.RandomName("ui-operator-e2e", 16)
 
 	testenv.Setup(

@@ -38,19 +38,19 @@ type podLifecycleContextKey string
 
 const (
 	podLifecycleNamespaceKey podLifecycleContextKey = "pod-lifecycle-namespace"
+	podLifecycleScalityUIKey podLifecycleContextKey = "pod-lifecycle-scalityui"
+	podLifecycleComponentKey podLifecycleContextKey = "pod-lifecycle-component"
+	podLifecycleExposerKey   podLifecycleContextKey = "pod-lifecycle-exposer"
 )
 
 func TestPodLifecycle_RollingUpdateOnConfigChange(t *testing.T) {
-	const (
-		scalityUIName = "rolling-update-ui"
-		componentName = "rolling-update-component"
-		exposerName   = "rolling-update-exposer"
-	)
-
 	feature := features.New("rolling-update-on-config-change").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			testNamespace := envconf.RandomName("rolling-update", 16)
+			scalityUIName := envconf.RandomName("rolling-update-ui", 24)
+			componentName := envconf.RandomName("rolling-update-comp", 24)
+			exposerName := envconf.RandomName("rolling-update-exp", 24)
 
 			ns := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{Name: testNamespace},
@@ -61,11 +61,17 @@ func TestPodLifecycle_RollingUpdateOnConfigChange(t *testing.T) {
 			t.Logf("Created namespace %s", testNamespace)
 
 			ctx = context.WithValue(ctx, podLifecycleNamespaceKey, testNamespace)
+			ctx = context.WithValue(ctx, podLifecycleScalityUIKey, scalityUIName)
+			ctx = context.WithValue(ctx, podLifecycleComponentKey, componentName)
+			ctx = context.WithValue(ctx, podLifecycleExposerKey, exposerName)
 			return ctx
 		}).
 		Assess("create full resource chain", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			scalityUIName := ctx.Value(podLifecycleScalityUIKey).(string)
+			componentName := ctx.Value(podLifecycleComponentKey).(string)
+			exposerName := ctx.Value(podLifecycleExposerKey).(string)
 
 			if err := framework.NewScalityUIBuilder(scalityUIName).
 				WithProductName("Rolling Update Test").
@@ -115,6 +121,7 @@ func TestPodLifecycle_RollingUpdateOnConfigChange(t *testing.T) {
 		Assess("wait for stability and record initial state", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			componentName := ctx.Value(podLifecycleComponentKey).(string)
 
 			activeRS, err := framework.WaitForDeploymentStable(ctx, client, namespace, componentName, framework.LongTimeout)
 			if err != nil {
@@ -135,6 +142,7 @@ func TestPodLifecycle_RollingUpdateOnConfigChange(t *testing.T) {
 		Assess("modify exposer appHistoryBasePath", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			exposerName := ctx.Value(podLifecycleExposerKey).(string)
 
 			err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 				exposer := &uiv1alpha1.ScalityUIComponentExposer{}
@@ -154,6 +162,7 @@ func TestPodLifecycle_RollingUpdateOnConfigChange(t *testing.T) {
 		Assess("verify component deployment rolling update", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			componentName := ctx.Value(podLifecycleComponentKey).(string)
 			initialHash := ctx.Value(podLifecycleContextKey("initial-hash")).(string)
 			initialRSName := ctx.Value(podLifecycleContextKey("initial-rs-name")).(string)
 
@@ -184,6 +193,7 @@ func TestPodLifecycle_RollingUpdateOnConfigChange(t *testing.T) {
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			scalityUIName := ctx.Value(podLifecycleScalityUIKey).(string)
 
 			if err := framework.DeleteScalityUI(ctx, client, scalityUIName); err != nil {
 				t.Logf("Warning: Failed to delete ScalityUI: %v", err)
@@ -204,16 +214,14 @@ func TestPodLifecycle_RollingUpdateOnConfigChange(t *testing.T) {
 }
 
 func TestPodLifecycle_OperatorCrashRecovery(t *testing.T) {
-	const (
-		scalityUIName = "crash-recovery-ui"
-		componentName = "crash-recovery-component"
-		exposerName   = "crash-recovery-exposer"
-	)
-
 	feature := features.New("operator-crash-recovery").
+		WithLabel("disruptive", "true").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			testNamespace := envconf.RandomName("crash-recovery", 16)
+			scalityUIName := envconf.RandomName("crash-recovery-ui", 24)
+			componentName := envconf.RandomName("crash-recovery-comp", 24)
+			exposerName := envconf.RandomName("crash-recovery-exp", 24)
 
 			ns := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{Name: testNamespace},
@@ -224,11 +232,17 @@ func TestPodLifecycle_OperatorCrashRecovery(t *testing.T) {
 			t.Logf("Created namespace %s", testNamespace)
 
 			ctx = context.WithValue(ctx, podLifecycleNamespaceKey, testNamespace)
+			ctx = context.WithValue(ctx, podLifecycleScalityUIKey, scalityUIName)
+			ctx = context.WithValue(ctx, podLifecycleComponentKey, componentName)
+			ctx = context.WithValue(ctx, podLifecycleExposerKey, exposerName)
 			return ctx
 		}).
 		Assess("create full resource chain", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			scalityUIName := ctx.Value(podLifecycleScalityUIKey).(string)
+			componentName := ctx.Value(podLifecycleComponentKey).(string)
+			exposerName := ctx.Value(podLifecycleExposerKey).(string)
 
 			if err := framework.NewScalityUIBuilder(scalityUIName).
 				WithProductName("Crash Recovery Test").
@@ -285,6 +299,9 @@ func TestPodLifecycle_OperatorCrashRecovery(t *testing.T) {
 		Assess("verify all resources recovered", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			scalityUIName := ctx.Value(podLifecycleScalityUIKey).(string)
+			componentName := ctx.Value(podLifecycleComponentKey).(string)
+			exposerName := ctx.Value(podLifecycleExposerKey).(string)
 
 			time.Sleep(5 * time.Second)
 
@@ -326,6 +343,7 @@ func TestPodLifecycle_OperatorCrashRecovery(t *testing.T) {
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			scalityUIName := ctx.Value(podLifecycleScalityUIKey).(string)
 
 			if err := framework.DeleteScalityUI(ctx, client, scalityUIName); err != nil {
 				t.Logf("Warning: Failed to delete ScalityUI: %v", err)
@@ -346,16 +364,14 @@ func TestPodLifecycle_OperatorCrashRecovery(t *testing.T) {
 }
 
 func TestPodLifecycle_NoSpuriousUpdatesAfterRestart(t *testing.T) {
-	const (
-		scalityUIName = "no-spurious-ui"
-		componentName = "no-spurious-component"
-		exposerName   = "no-spurious-exposer"
-	)
-
 	feature := features.New("no-spurious-updates-after-restart").
+		WithLabel("disruptive", "true").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			testNamespace := envconf.RandomName("no-spurious", 16)
+			scalityUIName := envconf.RandomName("no-spurious-ui", 24)
+			componentName := envconf.RandomName("no-spurious-comp", 24)
+			exposerName := envconf.RandomName("no-spurious-exp", 24)
 
 			ns := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{Name: testNamespace},
@@ -366,11 +382,17 @@ func TestPodLifecycle_NoSpuriousUpdatesAfterRestart(t *testing.T) {
 			t.Logf("Created namespace %s", testNamespace)
 
 			ctx = context.WithValue(ctx, podLifecycleNamespaceKey, testNamespace)
+			ctx = context.WithValue(ctx, podLifecycleScalityUIKey, scalityUIName)
+			ctx = context.WithValue(ctx, podLifecycleComponentKey, componentName)
+			ctx = context.WithValue(ctx, podLifecycleExposerKey, exposerName)
 			return ctx
 		}).
 		Assess("create full resource chain and wait for stability", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			scalityUIName := ctx.Value(podLifecycleScalityUIKey).(string)
+			componentName := ctx.Value(podLifecycleComponentKey).(string)
+			exposerName := ctx.Value(podLifecycleExposerKey).(string)
 
 			if err := framework.NewScalityUIBuilder(scalityUIName).
 				WithProductName("No Spurious Updates Test").
@@ -418,6 +440,7 @@ func TestPodLifecycle_NoSpuriousUpdatesAfterRestart(t *testing.T) {
 		Assess("record resource versions", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			componentName := ctx.Value(podLifecycleComponentKey).(string)
 
 			refs := []framework.ResourceRef{
 				{Kind: "Deployment", Namespace: namespace, Name: componentName},
@@ -452,6 +475,7 @@ func TestPodLifecycle_NoSpuriousUpdatesAfterRestart(t *testing.T) {
 		Assess("trigger reconcile and verify no spurious updates", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			componentName := ctx.Value(podLifecycleComponentKey).(string)
 			initialVersions := ctx.Value(podLifecycleContextKey("resource-versions")).(map[string]string)
 			refs := ctx.Value(podLifecycleContextKey("resource-refs")).([]framework.ResourceRef)
 
@@ -501,6 +525,7 @@ func TestPodLifecycle_NoSpuriousUpdatesAfterRestart(t *testing.T) {
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(podLifecycleNamespaceKey).(string)
+			scalityUIName := ctx.Value(podLifecycleScalityUIKey).(string)
 
 			if err := framework.DeleteScalityUI(ctx, client, scalityUIName); err != nil {
 				t.Logf("Warning: Failed to delete ScalityUI: %v", err)
