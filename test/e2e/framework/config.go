@@ -44,8 +44,17 @@ func GetProjectRoot() string {
 	return "../.."
 }
 
+// SkipBuild returns true if all local builds should be skipped.
+// This affects both operator and mock server builds.
 func SkipBuild() bool {
 	val := strings.ToLower(os.Getenv("E2E_SKIP_BUILD"))
+	return val == "true" || val == "1" || val == "yes"
+}
+
+// SkipOperatorBuild returns true if only the operator image build should be skipped.
+// Use this when pulling a pre-built operator image from registry but still need to build mock server locally.
+func SkipOperatorBuild() bool {
+	val := strings.ToLower(os.Getenv("E2E_SKIP_OPERATOR_BUILD"))
 	return val == "true" || val == "1" || val == "yes"
 }
 
