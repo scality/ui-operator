@@ -18,7 +18,6 @@ package e2e
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -103,25 +102,13 @@ func TestOperatorDeployment(t *testing.T) {
 type smokeTestContextKey string
 
 const (
-	smokeNamespaceKey  smokeTestContextKey = "smoke-namespace"
-	smokeScalityUIName smokeTestContextKey = "smoke-scalityui-name"
+	smokeNamespaceKey smokeTestContextKey = "smoke-namespace"
+	smokeScalityUIKey smokeTestContextKey = "smoke-scalityui"
+	smokeComponentKey smokeTestContextKey = "smoke-component"
+	smokeExposerKey   smokeTestContextKey = "smoke-exposer"
 )
 
-func getContextString(ctx context.Context, t *testing.T, key smokeTestContextKey) string {
-	val, ok := ctx.Value(key).(string)
-	if !ok {
-		t.Fatalf("Context key %q not found or not a string", key)
-	}
-	return val
-}
-
 func TestSmokeFullChain(t *testing.T) {
-	const (
-		scalityUIName = "e2e-smoke-ui"
-		componentName = "e2e-smoke-component"
-		exposerName   = "e2e-smoke-exposer"
-	)
-
 	// Expected values from mock-server's defaultMicroAppConfig()
 	const (
 		expectedPublicPath = "/mock/"
@@ -134,6 +121,9 @@ func TestSmokeFullChain(t *testing.T) {
 			client := cfg.Client()
 
 			testNamespace := envconf.RandomName("e2e-smoke", 16)
+			scalityUIName := envconf.RandomName("e2e-smoke-ui", 24)
+			componentName := envconf.RandomName("e2e-smoke-comp", 24)
+			exposerName := envconf.RandomName("e2e-smoke-exp", 24)
 
 			ns := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
@@ -143,82 +133,94 @@ func TestSmokeFullChain(t *testing.T) {
 			if err := client.Resources().Create(ctx, ns); err != nil {
 				t.Fatalf("Failed to create namespace %s: %v", testNamespace, err)
 			}
-			t.Logf("✓ Created namespace %s", testNamespace)
+			t.Logf("Created namespace %s", testNamespace)
 
 			ctx = context.WithValue(ctx, smokeNamespaceKey, testNamespace)
-			ctx = context.WithValue(ctx, smokeScalityUIName, scalityUIName)
+			ctx = context.WithValue(ctx, smokeScalityUIKey, scalityUIName)
+			ctx = context.WithValue(ctx, smokeComponentKey, componentName)
+			ctx = context.WithValue(ctx, smokeExposerKey, exposerName)
 			return ctx
 		}).
-		Assess("create ScalityUI from YAML", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("create ScalityUI", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
-			namespace := getContextString(ctx, t, smokeNamespaceKey)
+			scalityUIName := ctx.Value(smokeScalityUIKey).(string)
 
-			yamlPath := filepath.Join(framework.GetTestDataPath("smoke"), "scalityui.yaml")
-			if err := framework.LoadAndApplyYAML(ctx, client, yamlPath, namespace); err != nil {
-				t.Fatalf("Failed to apply ScalityUI YAML: %v", err)
+			if err := framework.NewScalityUIBuilder(scalityUIName).
+				WithProductName("E2E Smoke Test").
+				Create(ctx, client); err != nil {
+				t.Fatalf("Failed to create ScalityUI: %v", err)
 			}
-			t.Logf("✓ Applied ScalityUI from YAML")
+			t.Logf("Created ScalityUI %s", scalityUIName)
 
 			if err := framework.WaitForScalityUIReady(ctx, client, scalityUIName, framework.LongTimeout); err != nil {
 				t.Fatalf("ScalityUI not ready: %v", err)
 			}
-			t.Logf("✓ ScalityUI is ready")
+			t.Logf("ScalityUI is ready")
 
 			return ctx
 		}).
-		Assess("create ScalityUIComponent from YAML", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("create ScalityUIComponent", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
-			namespace := getContextString(ctx, t, smokeNamespaceKey)
+			namespace := ctx.Value(smokeNamespaceKey).(string)
+			componentName := ctx.Value(smokeComponentKey).(string)
 
-			yamlPath := filepath.Join(framework.GetTestDataPath("smoke"), "scalityuicomponent.yaml")
-			if err := framework.LoadAndApplyYAML(ctx, client, yamlPath, namespace); err != nil {
-				t.Fatalf("Failed to apply ScalityUIComponent YAML: %v", err)
+			if err := framework.NewScalityUIComponentBuilder(componentName, namespace).
+				WithImage(framework.MockServerImage).
+				Create(ctx, client); err != nil {
+				t.Fatalf("Failed to create ScalityUIComponent: %v", err)
 			}
-			t.Logf("✓ Applied ScalityUIComponent from YAML")
+			t.Logf("Created ScalityUIComponent %s", componentName)
 
 			if err := framework.WaitForDeploymentReady(ctx, client, namespace, componentName, framework.LongTimeout); err != nil {
 				t.Fatalf("ScalityUIComponent deployment not ready: %v", err)
 			}
-			t.Logf("✓ ScalityUIComponent deployment is ready")
+			t.Logf("ScalityUIComponent deployment is ready")
 
 			if err := framework.WaitForScalityUIComponentConfigured(ctx, client, namespace, componentName, framework.LongTimeout); err != nil {
 				t.Fatalf("ScalityUIComponent not configured: %v", err)
 			}
-			t.Logf("✓ ScalityUIComponent configuration retrieved")
+			t.Logf("ScalityUIComponent configuration retrieved")
 
 			return ctx
 		}).
-		Assess("create ScalityUIComponentExposer from YAML", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("create ScalityUIComponentExposer", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
-			namespace := getContextString(ctx, t, smokeNamespaceKey)
+			namespace := ctx.Value(smokeNamespaceKey).(string)
+			scalityUIName := ctx.Value(smokeScalityUIKey).(string)
+			componentName := ctx.Value(smokeComponentKey).(string)
+			exposerName := ctx.Value(smokeExposerKey).(string)
 
-			yamlPath := filepath.Join(framework.GetTestDataPath("smoke"), "scalityuicomponentexposer.yaml")
-			if err := framework.LoadAndApplyYAML(ctx, client, yamlPath, namespace); err != nil {
-				t.Fatalf("Failed to apply ScalityUIComponentExposer YAML: %v", err)
+			if err := framework.NewScalityUIComponentExposerBuilder(exposerName, namespace).
+				WithScalityUI(scalityUIName).
+				WithScalityUIComponent(componentName).
+				WithAppHistoryBasePath("/mock").
+				Create(ctx, client); err != nil {
+				t.Fatalf("Failed to create ScalityUIComponentExposer: %v", err)
 			}
-			t.Logf("✓ Applied ScalityUIComponentExposer from YAML")
+			t.Logf("Created ScalityUIComponentExposer %s", exposerName)
 
 			if err := framework.WaitForScalityUIComponentExposerReady(ctx, client, namespace, exposerName, framework.LongTimeout); err != nil {
 				t.Fatalf("ScalityUIComponentExposer not ready: %v", err)
 			}
-			t.Logf("✓ ScalityUIComponentExposer is ready")
+			t.Logf("ScalityUIComponentExposer is ready")
 
 			return ctx
 		}).
 		Assess("verify all resources created correctly", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
-			namespace := getContextString(ctx, t, smokeNamespaceKey)
+			namespace := ctx.Value(smokeNamespaceKey).(string)
+			componentName := ctx.Value(smokeComponentKey).(string)
 
 			if err := framework.WaitForServiceExists(ctx, client, namespace, componentName, framework.DefaultTimeout); err != nil {
 				t.Fatalf("Component Service not found: %v", err)
 			}
-			t.Logf("✓ Component Service exists")
+			t.Logf("Component Service exists")
 
 			runtimeConfigMapName := componentName + framework.RuntimeConfigMapSuffix
 			if err := framework.WaitForConfigMapExists(ctx, client, namespace, runtimeConfigMapName, framework.DefaultTimeout); err != nil {
 				t.Fatalf("Runtime ConfigMap not found: %v", err)
 			}
-			t.Logf("✓ Runtime ConfigMap exists")
+			t.Logf("Runtime ConfigMap exists")
 
 			component, err := framework.GetScalityUIComponent(ctx, client, namespace, componentName)
 			if err != nil {
@@ -227,35 +229,35 @@ func TestSmokeFullChain(t *testing.T) {
 			if component.Status.PublicPath != expectedPublicPath {
 				t.Fatalf("Expected PublicPath %q, got %q", expectedPublicPath, component.Status.PublicPath)
 			}
-			t.Logf("✓ ScalityUIComponent.Status.PublicPath = %s", component.Status.PublicPath)
+			t.Logf("ScalityUIComponent.Status.PublicPath = %s", component.Status.PublicPath)
 
 			if component.Status.Kind != expectedKind {
 				t.Fatalf("Expected Kind %q, got %q", expectedKind, component.Status.Kind)
 			}
-			t.Logf("✓ ScalityUIComponent.Status.Kind = %s", component.Status.Kind)
+			t.Logf("ScalityUIComponent.Status.Kind = %s", component.Status.Kind)
 
 			if component.Status.Version != expectedVersion {
 				t.Fatalf("Expected Version %q, got %q", expectedVersion, component.Status.Version)
 			}
-			t.Logf("✓ ScalityUIComponent.Status.Version = %s", component.Status.Version)
+			t.Logf("ScalityUIComponent.Status.Version = %s", component.Status.Version)
 
 			configVolumeName := framework.ConfigVolumePrefix + componentName
 			if err := framework.WaitForDeploymentHasVolume(ctx, client, namespace, componentName, configVolumeName, framework.DefaultTimeout); err != nil {
 				t.Fatalf("Component Deployment does not have config volume: %v", err)
 			}
-			t.Logf("✓ Component Deployment has config volume mounted")
+			t.Logf("Component Deployment has config volume mounted")
 
 			return ctx
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
-			namespace := getContextString(ctx, t, smokeNamespaceKey)
-			uiName := getContextString(ctx, t, smokeScalityUIName)
+			namespace := ctx.Value(smokeNamespaceKey).(string)
+			scalityUIName := ctx.Value(smokeScalityUIKey).(string)
 
-			if err := framework.DeleteScalityUI(ctx, client, uiName); err != nil {
-				t.Logf("Warning: Failed to delete ScalityUI %s: %v", uiName, err)
+			if err := framework.DeleteScalityUI(ctx, client, scalityUIName); err != nil {
+				t.Logf("Warning: Failed to delete ScalityUI %s: %v", scalityUIName, err)
 			} else {
-				t.Logf("✓ Deleted ScalityUI %s", uiName)
+				t.Logf("Deleted ScalityUI %s", scalityUIName)
 			}
 
 			ns := &corev1.Namespace{
@@ -266,7 +268,7 @@ func TestSmokeFullChain(t *testing.T) {
 			if err := client.Resources().Delete(ctx, ns); err != nil {
 				t.Logf("Warning: Failed to delete namespace %s: %v", namespace, err)
 			} else {
-				t.Logf("✓ Deleted namespace %s", namespace)
+				t.Logf("Deleted namespace %s", namespace)
 			}
 
 			return ctx

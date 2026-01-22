@@ -29,19 +29,21 @@ import (
 
 type namespaceDeletionContextKey string
 
-const namespaceDeletionNamespaceKey namespaceDeletionContextKey = "namespace-deletion-namespace"
+const (
+	namespaceDeletionNamespaceKey namespaceDeletionContextKey = "namespace-deletion-namespace"
+	namespaceDeletionScalityUIKey namespaceDeletionContextKey = "namespace-deletion-scalityui"
+	namespaceDeletionComponentKey namespaceDeletionContextKey = "namespace-deletion-component"
+	namespaceDeletionExposerKey   namespaceDeletionContextKey = "namespace-deletion-exposer"
+)
 
 func TestNamespaceDeletion_CascadeCleanup(t *testing.T) {
-	const (
-		scalityUIName = "cascade-cleanup-ui"
-		componentName = "cascade-cleanup-component"
-		exposerName   = "cascade-cleanup-exposer"
-	)
-
 	feature := features.New("namespace-deletion-cascade-cleanup").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			testNamespace := envconf.RandomName("ns-deletion", 16)
+			scalityUIName := envconf.RandomName("cascade-cleanup-ui", 24)
+			componentName := envconf.RandomName("cascade-cleanup-comp", 24)
+			exposerName := envconf.RandomName("cascade-cleanup-exp", 24)
 
 			ns := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{Name: testNamespace},
@@ -52,10 +54,14 @@ func TestNamespaceDeletion_CascadeCleanup(t *testing.T) {
 			t.Logf("Created namespace %s", testNamespace)
 
 			ctx = context.WithValue(ctx, namespaceDeletionNamespaceKey, testNamespace)
+			ctx = context.WithValue(ctx, namespaceDeletionScalityUIKey, scalityUIName)
+			ctx = context.WithValue(ctx, namespaceDeletionComponentKey, componentName)
+			ctx = context.WithValue(ctx, namespaceDeletionExposerKey, exposerName)
 			return ctx
 		}).
 		Assess("create ScalityUI", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
+			scalityUIName := ctx.Value(namespaceDeletionScalityUIKey).(string)
 
 			if err := framework.NewScalityUIBuilder(scalityUIName).
 				WithProductName("Namespace Deletion Test").
@@ -74,6 +80,9 @@ func TestNamespaceDeletion_CascadeCleanup(t *testing.T) {
 		Assess("create Component and Exposer in test namespace", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(namespaceDeletionNamespaceKey).(string)
+			scalityUIName := ctx.Value(namespaceDeletionScalityUIKey).(string)
+			componentName := ctx.Value(namespaceDeletionComponentKey).(string)
+			exposerName := ctx.Value(namespaceDeletionExposerKey).(string)
 
 			if err := framework.NewScalityUIComponentBuilder(componentName, namespace).
 				WithImage(framework.MockServerImage).
@@ -109,6 +118,8 @@ func TestNamespaceDeletion_CascadeCleanup(t *testing.T) {
 		}).
 		Assess("verify component in deployed-apps", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
+			scalityUIName := ctx.Value(namespaceDeletionScalityUIKey).(string)
+			componentName := ctx.Value(namespaceDeletionComponentKey).(string)
 
 			if err := framework.WaitForDeployedAppsContains(ctx, client, scalityUIName, componentName, framework.LongTimeout); err != nil {
 				t.Fatalf("Component not in deployed-apps: %v", err)
@@ -150,6 +161,8 @@ func TestNamespaceDeletion_CascadeCleanup(t *testing.T) {
 		}).
 		Assess("verify component removed from deployed-apps", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
+			scalityUIName := ctx.Value(namespaceDeletionScalityUIKey).(string)
+			componentName := ctx.Value(namespaceDeletionComponentKey).(string)
 
 			if err := framework.WaitForDeployedAppsNotContains(ctx, client, scalityUIName, componentName, framework.LongTimeout); err != nil {
 				t.Fatalf("Component still in deployed-apps after namespace deletion: %v", err)
@@ -166,6 +179,7 @@ func TestNamespaceDeletion_CascadeCleanup(t *testing.T) {
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
 			namespace := ctx.Value(namespaceDeletionNamespaceKey).(string)
+			scalityUIName := ctx.Value(namespaceDeletionScalityUIKey).(string)
 
 			if err := framework.DeleteScalityUI(ctx, client, scalityUIName); err != nil {
 				t.Logf("Warning: Failed to delete ScalityUI: %v", err)
