@@ -303,8 +303,6 @@ func TestPodLifecycle_OperatorCrashRecovery(t *testing.T) {
 			componentName := ctx.Value(podLifecycleComponentKey).(string)
 			exposerName := ctx.Value(podLifecycleExposerKey).(string)
 
-			time.Sleep(5 * time.Second)
-
 			if err := framework.WaitForScalityUIReady(ctx, client, scalityUIName, framework.DefaultTimeout); err != nil {
 				t.Fatalf("ScalityUI not ready after recovery: %v", err)
 			}

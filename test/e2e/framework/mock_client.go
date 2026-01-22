@@ -86,7 +86,7 @@ func (c *MockServerClient) ensureCurlPod(ctx context.Context, namespace string) 
 		"--image-pull-policy=IfNotPresent",
 		"--command",
 		"--",
-		"sleep", "3600",
+		"sleep", "300",
 	}
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	var stdout, stderr bytes.Buffer
