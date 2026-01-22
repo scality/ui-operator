@@ -1,4 +1,5 @@
-# Simplified Dockerfile for e2e testing
+# Simplified Dockerfile for local e2e testing
+# In CI, the production image from ghcr.io is used instead
 # Assumes binary is pre-built locally for the correct architecture
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /

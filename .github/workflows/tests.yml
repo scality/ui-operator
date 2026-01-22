@@ -29,10 +29,22 @@ jobs:
 
       - name: Run tests
         run: make test
+
+  build:
+    uses: ./.github/workflows/docker.yml
+    with:
+      push-image: true
+    secrets:
+      GH_PAT: ${{ secrets.GH_PAT }}
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [build]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
 
     steps:
       - name: Checkout code
@@ -44,6 +56,16 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           gh-token: ${{ secrets.GH_PAT }}
 
+      - name: Login to Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull operator image
+        run: docker pull ghcr.io/${{ github.repository }}:${{ github.sha }}
+
       - name: Install Kind
         uses: helm/kind-action@v1
         with:
@@ -51,10 +73,6 @@ jobs:
 
       - name: Run E2E tests
         run: make test-e2e
-
-  build:
-    uses: ./.github/workflows/docker.yml
-    with:
-      push-image: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    secrets:
-      GH_PAT: ${{ secrets.GH_PAT }}
+        env:
+          E2E_SKIP_BUILD: "true"
+          E2E_OPERATOR_IMAGE: "ghcr.io/${{ github.repository }}:${{ github.sha }}"
