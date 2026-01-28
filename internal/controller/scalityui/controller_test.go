@@ -580,6 +580,143 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(deployedAppsConfigMap.Annotations).To(HaveKey("scality.com/deployed-apps-hash"))
 			})
 
+			It("should include ExtraUIApps in deployed-ui-apps ConfigMap", func() {
+				By("Creating ScalityUI with ExtraUIApps")
+				extraUIAppName := "extra-ui-apps-test"
+				extraUI := &uiv1alpha1.ScalityUI{
+					ObjectMeta: metav1.ObjectMeta{Name: extraUIAppName},
+					Spec: uiv1alpha1.ScalityUISpec{
+						Image:       "shell-ui:1.0.0",
+						ProductName: "Extra UI Apps Test",
+						ExtraUIApps: []uiv1alpha1.DeployedUIApp{
+							{
+								Name:               "external-app",
+								Kind:               "solution",
+								URL:                "/external-app",
+								Version:            "2.0.0",
+								AppHistoryBasePath: "/external-app",
+							},
+							{
+								Name:               "another-app",
+								Kind:               "micro-app",
+								URL:                "/another-app",
+								Version:            "1.5.0",
+								AppHistoryBasePath: "/another",
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, extraUI)).To(Succeed())
+				defer k8sClient.Delete(ctx, extraUI)
+
+				By("Reconciling to create deployed-ui-apps ConfigMap")
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: types.NamespacedName{Name: extraUIAppName},
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying deployed-ui-apps ConfigMap contains ExtraUIApps")
+				verifyDeployedUIAppsContent(ctx, extraUIAppName, []map[string]interface{}{
+					{
+						"appHistoryBasePath": "/external-app",
+						"kind":               "solution",
+						"name":               "external-app",
+						"url":                "/external-app",
+						"version":            "2.0.0",
+					},
+					{
+						"appHistoryBasePath": "/another",
+						"kind":               "micro-app",
+						"name":               "another-app",
+						"url":                "/another-app",
+						"version":            "1.5.0",
+					},
+				})
+			})
+
+			It("should merge ExtraUIApps with exposer-based apps", func() {
+				By("Creating ScalityUI with ExtraUIApps")
+				mergeUIAppName := "merge-ui-apps-test"
+				mergeUI := &uiv1alpha1.ScalityUI{
+					ObjectMeta: metav1.ObjectMeta{Name: mergeUIAppName},
+					Spec: uiv1alpha1.ScalityUISpec{
+						Image:       "shell-ui:1.0.0",
+						ProductName: "Merge UI Apps Test",
+						ExtraUIApps: []uiv1alpha1.DeployedUIApp{
+							{
+								Name:               "extra-app",
+								Kind:               "solution",
+								URL:                "/extra-app",
+								Version:            "3.0.0",
+								AppHistoryBasePath: "/extra",
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, mergeUI)).To(Succeed())
+				defer k8sClient.Delete(ctx, mergeUI)
+
+				By("Creating component and exposer")
+				testNamespace := "test-merge-apps"
+				ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}
+				Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+				defer k8sClient.Delete(ctx, ns)
+
+				component := &uiv1alpha1.ScalityUIComponent{
+					ObjectMeta: metav1.ObjectMeta{Name: "merge-component", Namespace: testNamespace},
+					Spec:       uiv1alpha1.ScalityUIComponentSpec{Image: "component:1.0.0"},
+				}
+				Expect(k8sClient.Create(ctx, component)).To(Succeed())
+				component.Status = uiv1alpha1.ScalityUIComponentStatus{
+					Kind: "micro-app", PublicPath: "/apps/merge-component", Version: "1.0.0",
+				}
+				component.Status.Conditions = []metav1.Condition{
+					{
+						Type:               "ConfigurationRetrieved",
+						Status:             metav1.ConditionTrue,
+						Reason:             "FetchSucceeded",
+						LastTransitionTime: metav1.Now(),
+					},
+				}
+				Expect(k8sClient.Status().Update(ctx, component)).To(Succeed())
+				defer k8sClient.Delete(ctx, component)
+
+				exposer := &uiv1alpha1.ScalityUIComponentExposer{
+					ObjectMeta: metav1.ObjectMeta{Name: "merge-exposer", Namespace: testNamespace},
+					Spec: uiv1alpha1.ScalityUIComponentExposerSpec{
+						ScalityUI: mergeUIAppName, ScalityUIComponent: "merge-component", AppHistoryBasePath: "/merge-app",
+					},
+				}
+				Expect(k8sClient.Create(ctx, exposer)).To(Succeed())
+				defer k8sClient.Delete(ctx, exposer)
+
+				By("Reconciling to merge apps")
+				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: types.NamespacedName{Name: mergeUIAppName},
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying deployed-ui-apps ConfigMap contains both exposer-based and ExtraUIApps")
+				verifyDeployedUIAppsContent(ctx, mergeUIAppName, []map[string]interface{}{
+					{
+						"appHistoryBasePath": "/merge-app",
+						"kind":               "micro-app",
+						"name":               "merge-component",
+						"url":                "/apps/merge-component",
+						"version":            "1.0.0",
+					},
+					{
+						"appHistoryBasePath": "/extra",
+						"kind":               "solution",
+						"name":               "extra-app",
+						"url":                "/extra-app",
+						"version":            "3.0.0",
+					},
+				})
+			})
+
 			It("should trigger rolling update when exposer is removed", func() {
 				By("Deploying the Shell UI with an exposer")
 				reconciler := NewScalityUIReconcilerForTest(k8sClient, k8sClient.Scheme())

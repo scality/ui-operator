@@ -73,6 +73,38 @@ spec:
                     description: Scopes specifies the OIDC scopes
                     type: string
                 type: object
+              extraUIApps:
+                items:
+                  description: DeployedUIApp represents a deployed UI application
+                    entry
+                  properties:
+                    appHistoryBasePath:
+                      description: AppHistoryBasePath is the base path for the app's
+                        history
+                      type: string
+                    kind:
+                      description: Kind specifies the type of UI app (e.g., "micro-app",
+                        "solution")
+                      type: string
+                    name:
+                      description: Name is the unique identifier for the app
+                      minLength: 1
+                      type: string
+                    url:
+                      description: URL is the path where the app is served
+                      minLength: 1
+                      type: string
+                    version:
+                      description: Version is the app version
+                      type: string
+                  required:
+                  - appHistoryBasePath
+                  - kind
+                  - name
+                  - url
+                  - version
+                  type: object
+                type: array
               image:
                 description: |-
                   INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
