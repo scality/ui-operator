@@ -60,9 +60,6 @@ func validateMicroAppConfig(config *MicroAppConfig) error {
 	if config.Spec.PublicPath == "" {
 		return fmt.Errorf("configuration missing required field: spec.publicPath")
 	}
-	if config.Spec.Version == "" {
-		return fmt.Errorf("configuration missing required field: spec.version")
-	}
 	return nil
 }
 
