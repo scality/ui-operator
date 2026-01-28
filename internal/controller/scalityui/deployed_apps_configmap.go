@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
+	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,7 +27,7 @@ func newDeployedAppsConfigMapReducer(r *ScalityUIReconciler, cr ScalityUI, curre
 			}
 
 			// Build the deployed apps list with component deduplication
-			deployedApps := make([]DeployedUIApp, 0)
+			deployedApps := make([]uiv1alpha1.DeployedUIApp, 0)
 			processedComponents := make(map[string]bool) // Track which components we've already processed
 
 			for _, exposer := range exposers {
@@ -48,7 +49,7 @@ func newDeployedAppsConfigMapReducer(r *ScalityUIReconciler, cr ScalityUI, curre
 				}
 
 				if meta.IsStatusConditionTrue(component.Status.Conditions, "ConfigurationRetrieved") {
-					deployedApp := DeployedUIApp{
+					deployedApp := uiv1alpha1.DeployedUIApp{
 						AppHistoryBasePath: exposer.Spec.AppHistoryBasePath,
 						Kind:               component.Status.Kind,
 						Name:               component.Name,
@@ -59,6 +60,9 @@ func newDeployedAppsConfigMapReducer(r *ScalityUIReconciler, cr ScalityUI, curre
 					processedComponents[componentKey] = true // Mark as processed
 				}
 			}
+
+			// Append ExtraUIApps directly from ScalityUI spec
+			deployedApps = append(deployedApps, cr.Spec.ExtraUIApps...)
 
 			// Create or update the deployed-ui-apps ConfigMap
 			configMapName := cr.Name + "-deployed-ui-apps"
@@ -102,7 +106,10 @@ func newDeployedAppsConfigMapReducer(r *ScalityUIReconciler, cr ScalityUI, curre
 
 			logOperationResult(log, result, "ConfigMap deployed-ui-apps", configMapName)
 			log.Info("Successfully reconciled deployed UI apps",
-				"appsCount", len(deployedApps), "configMap", configMapName)
+				"totalAppsCount", len(deployedApps),
+				"exposerAppsCount", len(deployedApps)-len(cr.Spec.ExtraUIApps),
+				"extraUIAppsCount", len(cr.Spec.ExtraUIApps),
+				"configMap", configMapName)
 
 			// Store hash in memory for deployment to use (avoids cache sync issues)
 			currentState.SetSubresourceHash(deployedAppsConfigMapHashKey, deployedAppsHash)

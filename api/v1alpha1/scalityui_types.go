@@ -27,6 +27,27 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// DeployedUIApp represents a deployed UI application entry
+type DeployedUIApp struct {
+	// AppHistoryBasePath is the base path for the app's history
+	// +kubebuilder:validation:Required
+	AppHistoryBasePath string `json:"appHistoryBasePath"`
+	// Kind specifies the type of UI app (e.g., "micro-app", "solution")
+	// +kubebuilder:validation:Required
+	Kind string `json:"kind"`
+	// Name is the unique identifier for the app
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// URL is the path where the app is served
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	URL string `json:"url"`
+	// Version is the app version
+	// +kubebuilder:validation:Required
+	Version string `json:"version"`
+}
+
 // ScalityUISpec defines the desired state of ScalityUI
 type ScalityUISpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -39,6 +60,7 @@ type ScalityUISpec struct {
 	Auth             *AuthConfig                   `json:"auth,omitempty"`
 	UIConfig         *UIConfig                     `json:"uiConfig,omitempty"`
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+	ExtraUIApps      []DeployedUIApp               `json:"extraUIApps,omitempty"`
 
 	// Scheduling defines pod scheduling constraints for the UI deployment
 	Scheduling *PodSchedulingSpec `json:"scheduling,omitempty"`

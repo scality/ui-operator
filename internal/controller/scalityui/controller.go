@@ -25,15 +25,6 @@ import (
 	"github.com/scality/ui-operator/internal/services"
 )
 
-// DeployedUIApp represents a deployed UI application entry
-type DeployedUIApp struct {
-	AppHistoryBasePath string `json:"appHistoryBasePath"`
-	Kind               string `json:"kind"`
-	Name               string `json:"name"`
-	URL                string `json:"url"`
-	Version            string `json:"version"`
-}
-
 // getOperatorNamespace returns the namespace where the operator is deployed.
 // It reads from the POD_NAMESPACE environment variable, which should be set
 // using the downward API in the operator's deployment.
