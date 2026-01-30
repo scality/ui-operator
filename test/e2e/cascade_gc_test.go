@@ -43,6 +43,7 @@ const (
 )
 
 func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
+	t.Parallel()
 	feature := features.New("exposer-updates-component").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
@@ -214,6 +215,7 @@ func TestCascadeGC_ExposerUpdatesComponent(t *testing.T) {
 }
 
 func TestCascadeGC_ExposerDeletionCleanup(t *testing.T) {
+	t.Parallel()
 	feature := features.New("exposer-deletion-cleanup").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()

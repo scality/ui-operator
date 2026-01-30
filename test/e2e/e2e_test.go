@@ -29,6 +29,7 @@ import (
 )
 
 func TestCRDInstallation(t *testing.T) {
+	t.Parallel()
 	expectedCRDs := []string{
 		"scalityuis.ui.scality.com",
 		"scalityuicomponents.ui.scality.com",
@@ -54,6 +55,7 @@ func TestCRDInstallation(t *testing.T) {
 }
 
 func TestOperatorDeployment(t *testing.T) {
+	t.Parallel()
 	if framework.SkipOperatorDeploy() {
 		t.Skip("Skipping operator deployment test (E2E_SKIP_OPERATOR=true)")
 	}
@@ -109,6 +111,7 @@ const (
 )
 
 func TestSmokeFullChain(t *testing.T) {
+	t.Parallel()
 	// Expected values from mock-server's defaultMicroAppConfig()
 	const (
 		expectedPublicPath = "/mock/"
