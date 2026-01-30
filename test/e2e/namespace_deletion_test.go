@@ -37,6 +37,7 @@ const (
 )
 
 func TestNamespaceDeletion_CascadeCleanup(t *testing.T) {
+	t.Parallel()
 	feature := features.New("namespace-deletion-cascade-cleanup").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()

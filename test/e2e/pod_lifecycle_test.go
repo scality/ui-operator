@@ -44,6 +44,7 @@ const (
 )
 
 func TestPodLifecycle_RollingUpdateOnConfigChange(t *testing.T) {
+	t.Parallel()
 	feature := features.New("rolling-update-on-config-change").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
@@ -214,6 +215,7 @@ func TestPodLifecycle_RollingUpdateOnConfigChange(t *testing.T) {
 }
 
 func TestPodLifecycle_OperatorCrashRecovery(t *testing.T) {
+	t.Parallel()
 	feature := features.New("operator-crash-recovery").
 		WithLabel("disruptive", "true").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -362,6 +364,7 @@ func TestPodLifecycle_OperatorCrashRecovery(t *testing.T) {
 }
 
 func TestPodLifecycle_NoSpuriousUpdatesAfterRestart(t *testing.T) {
+	t.Parallel()
 	feature := features.New("no-spurious-updates-after-restart").
 		WithLabel("disruptive", "true").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
