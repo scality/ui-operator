@@ -42,6 +42,7 @@ const (
 )
 
 func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
+	t.Parallel()
 	feature := features.New("multi-namespace-components-aggregation").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()
@@ -304,6 +305,7 @@ func TestMultiNamespace_MultipleComponentsAggregation(t *testing.T) {
 }
 
 func TestMultiNamespace_PartialNamespaceDeletion(t *testing.T) {
+	t.Parallel()
 	feature := features.New("multi-namespace-partial-deletion").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := cfg.Client()

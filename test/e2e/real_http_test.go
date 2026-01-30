@@ -37,6 +37,7 @@ type realHTTPContextKey string
 const realHTTPNamespaceKey realHTTPContextKey = "real-http-namespace"
 
 func TestRealHTTP_ReconcileStormPrevention(t *testing.T) {
+	t.Parallel()
 	const componentName = "storm-test-component"
 
 	feature := features.New("reconcile-storm-prevention").
@@ -133,6 +134,7 @@ func TestRealHTTP_ReconcileStormPrevention(t *testing.T) {
 }
 
 func TestRealHTTP_TimeoutHandling(t *testing.T) {
+	t.Parallel()
 	const componentName = "timeout-test-component"
 
 	feature := features.New("http-timeout-handling").
@@ -229,6 +231,7 @@ func TestRealHTTP_TimeoutHandling(t *testing.T) {
 // TestRealHTTP_RecoveryAfterServerFailure verifies recovery after server failure.
 // Strategy: Reset mock server config, then wait for controller's natural retry (RequeueAfter: 30s).
 func TestRealHTTP_RecoveryAfterServerFailure(t *testing.T) {
+	t.Parallel()
 	const componentName = "recovery-test-component"
 
 	feature := features.New("recovery-after-server-failure").
@@ -392,6 +395,7 @@ func TestRealHTTP_RecoveryAfterServerFailure(t *testing.T) {
 // TestRealHTTP_NoFetchWithoutTrigger verifies that after initial success,
 // the controller doesn't make new HTTP requests without a trigger (image change or force-refresh).
 func TestRealHTTP_NoFetchWithoutTrigger(t *testing.T) {
+	t.Parallel()
 	const componentName = "no-fetch-test-component"
 
 	feature := features.New("no-fetch-without-trigger").
