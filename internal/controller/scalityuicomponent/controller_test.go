@@ -784,7 +784,7 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 	})
 
 	Context("Validation failure handling", func() {
-		It("should not retry fetch after validation failure for same image", func() {
+		It("should retry fetch after validation failure to handle rolling update race conditions", func() {
 			ctx := context.Background()
 
 			scalityUIComponent := &uiv1alpha1.ScalityUIComponent{
@@ -838,20 +838,99 @@ var _ = Describe("ScalityUIComponent Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should fetch once")
 
-			By("Verify LastFetchedImage is set despite validation failure")
+			By("Verify LastFetchedImage is NOT set on validation failure")
 			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
-			Expect(scalityUIComponent.Status.LastFetchedImage).To(Equal("scality/invalid-config:v1.0.0"))
+			Expect(scalityUIComponent.Status.LastFetchedImage).To(BeEmpty())
 
-			By("Third reconcile - should NOT fetch again (same image)")
+			By("Third reconcile - should retry fetch (lastFetchedImage not stamped)")
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1), "Should still be 1 - no refetch")
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2), "Should retry fetch after validation failure")
 
 			By("Verify ConfigurationRetrieved condition is False")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
 			condition := meta.FindStatusCondition(scalityUIComponent.Status.Conditions, "ConfigurationRetrieved")
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(condition.Reason).To(Equal("ValidationFailed"))
+		})
+
+		It("should eventually succeed after validation failure when config becomes valid", func() {
+			ctx := context.Background()
+
+			scalityUIComponent := &uiv1alpha1.ScalityUIComponent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-validation-recovery",
+					Namespace: "default",
+				},
+				Spec: uiv1alpha1.ScalityUIComponentSpec{
+					Image:     "scality/ui-component:v2.0.0",
+					MountPath: "/usr/share/ui-config",
+				},
+			}
+			Expect(k8sClient.Create(ctx, scalityUIComponent)).To(Succeed())
+
+			mockFetcher := &MockConfigFetcher{
+				ConfigContent: `{
+					"metadata": {},
+					"spec": {
+						"publicPath": "/test/"
+					}
+				}`,
+			}
+			controllerReconciler := &ScalityUIComponentReconciler{
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ConfigFetcher: mockFetcher,
+			}
+
+			typeNamespacedName := types.NamespacedName{
+				Name:      "test-validation-recovery",
+				Namespace: "default",
+			}
+
+			By("First reconcile - creates deployment")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Wait for deployment to be ready")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, deployment)
+			}, time.Second*5, time.Millisecond*250).Should(Succeed())
+
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.Replicas = 1
+			deployment.Status.UpdatedReplicas = 1
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Second reconcile - fetches config missing metadata.kind, fails validation")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(1))
+
+			By("Simulate rolling update completing - new pod now returns valid config")
+			mockFetcher.ConfigContent = `{
+				"metadata": {"kind": "TestKind"},
+				"spec": {
+					"publicPath": "/test/",
+					"remoteEntryPath": "/remoteEntry.js",
+					"version": "2.0.0"
+				}
+			}`
+
+			By("Third reconcile - should retry and succeed with valid config")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockFetcher.ReceivedCalls).To(HaveLen(2))
+
+			By("Verify ConfigurationRetrieved is now True")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, scalityUIComponent)).To(Succeed())
+			condition := meta.FindStatusCondition(scalityUIComponent.Status.Conditions, "ConfigurationRetrieved")
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(scalityUIComponent.Status.PublicPath).To(Equal("/test/"))
+			Expect(scalityUIComponent.Status.LastFetchedImage).To(Equal("scality/ui-component:v2.0.0"))
 		})
 	})
 
