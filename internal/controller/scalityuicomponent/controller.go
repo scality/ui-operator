@@ -398,9 +398,6 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 			Message: fmt.Sprintf("Configuration validation failed for image %s: %v", currentImage, err),
 		})
 
-		// Update LastFetchedImage to prevent repeated fetch attempts for the same invalid config
-		scalityUIComponent.Status.LastFetchedImage = currentImage
-
 		if statusErr := r.Status().Update(ctx, scalityUIComponent); statusErr != nil {
 			logger.Error(statusErr, "Failed to update ScalityUIComponent status after validation failure")
 		}
