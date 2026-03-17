@@ -391,15 +391,25 @@ func (r *ScalityUIComponentReconciler) parseAndApplyConfig(ctx context.Context,
 	if err := validateMicroAppConfig(&config); err != nil {
 		logger.Error(err, "Invalid micro-app configuration")
 
-		meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, metav1.Condition{
+		newCondition := metav1.Condition{
 			Type:    ConditionTypeConfigurationRetrieved,
 			Status:  metav1.ConditionFalse,
 			Reason:  "ValidationFailed",
 			Message: fmt.Sprintf("Configuration validation failed for image %s: %v", currentImage, err),
-		})
+		}
 
-		if statusErr := r.Status().Update(ctx, scalityUIComponent); statusErr != nil {
-			logger.Error(statusErr, "Failed to update ScalityUIComponent status after validation failure")
+		existing := meta.FindStatusCondition(scalityUIComponent.Status.Conditions, ConditionTypeConfigurationRetrieved)
+		conditionChanged := existing == nil ||
+			existing.Status != newCondition.Status ||
+			existing.Reason != newCondition.Reason ||
+			existing.Message != newCondition.Message
+
+		meta.SetStatusCondition(&scalityUIComponent.Status.Conditions, newCondition)
+
+		if conditionChanged {
+			if statusErr := r.Status().Update(ctx, scalityUIComponent); statusErr != nil {
+				logger.Error(statusErr, "Failed to update ScalityUIComponent status after validation failure")
+			}
 		}
 
 		// Remove force-refresh annotation even on failure to prevent infinite fetch loops
