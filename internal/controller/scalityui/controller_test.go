@@ -617,20 +617,22 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying deployed-ui-apps ConfigMap contains ExtraUIApps")
+				// Apps are sorted by (Name, URL) for hash stability;
+				// expectations are in that canonical order, not insertion order.
 				verifyDeployedUIAppsContent(ctx, extraUIAppName, []map[string]interface{}{
-					{
-						"appHistoryBasePath": "/external-app",
-						"kind":               "solution",
-						"name":               "external-app",
-						"url":                "/external-app",
-						"version":            "2.0.0",
-					},
 					{
 						"appHistoryBasePath": "/another",
 						"kind":               "micro-app",
 						"name":               "another-app",
 						"url":                "/another-app",
 						"version":            "1.5.0",
+					},
+					{
+						"appHistoryBasePath": "/external-app",
+						"kind":               "solution",
+						"name":               "external-app",
+						"url":                "/external-app",
+						"version":            "2.0.0",
 					},
 				})
 			})
@@ -699,20 +701,22 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying deployed-ui-apps ConfigMap contains both exposer-based and ExtraUIApps")
+				// Apps are sorted by (Name, URL) for hash stability;
+				// expectations are in that canonical order, not insertion order.
 				verifyDeployedUIAppsContent(ctx, mergeUIAppName, []map[string]interface{}{
-					{
-						"appHistoryBasePath": "/merge-app",
-						"kind":               "micro-app",
-						"name":               "merge-component",
-						"url":                "/apps/merge-component",
-						"version":            "1.0.0",
-					},
 					{
 						"appHistoryBasePath": "/extra",
 						"kind":               "solution",
 						"name":               "extra-app",
 						"url":                "/extra-app",
 						"version":            "3.0.0",
+					},
+					{
+						"appHistoryBasePath": "/merge-app",
+						"kind":               "micro-app",
+						"name":               "merge-component",
+						"url":                "/apps/merge-component",
+						"version":            "1.0.0",
 					},
 				})
 			})
