@@ -146,7 +146,8 @@ var _ = Describe("deployed-ui-apps partial-write race", func() {
 		Expect(apps5).To(HaveLen(5))
 		Expect(appNames(apps5)).To(ContainElement("metalk8s-ui"))
 		hash5 := cm.Annotations["scality.com/deployed-apps-hash"]
-		fmt.Fprintf(GinkgoWriter, "[step 1] full ConfigMap written, hash=%s\n", hash5[:16])
+		Expect(hash5).NotTo(BeEmpty(), "deployed-apps-hash annotation must be set after a successful write")
+		fmt.Fprintf(GinkgoWriter, "[step 1] full ConfigMap written, hash=%s\n", shortHash(hash5))
 
 		flickerMetalk8sCondition(ctx, metav1.ConditionFalse, "Revalidating", "image re-fetch in progress")
 		result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clusterScopedName})
@@ -159,7 +160,7 @@ var _ = Describe("deployed-ui-apps partial-write race", func() {
 		appsAfterFlicker := decodeApps(cm.Data["deployed-ui-apps.json"])
 		hashAfterFlicker := cm.Annotations["scality.com/deployed-apps-hash"]
 		fmt.Fprintf(GinkgoWriter, "[step 2] flicker observed, ConfigMap unchanged at %d apps, hash=%s\n",
-			len(appsAfterFlicker), hashAfterFlicker[:16])
+			len(appsAfterFlicker), shortHash(hashAfterFlicker))
 
 		Expect(appsAfterFlicker).To(HaveLen(5),
 			"transient flicker must not downgrade the ConfigMap")
@@ -285,6 +286,15 @@ func decodeApps(s string) []uiv1alpha1.DeployedUIApp {
 	var apps []uiv1alpha1.DeployedUIApp
 	_ = json.Unmarshal([]byte(s), &apps)
 	return apps
+}
+
+// shortHash returns up to the first 16 characters of a hash for logging,
+// without panicking on shorter or empty values.
+func shortHash(h string) string {
+	if len(h) > 16 {
+		return h[:16]
+	}
+	return h
 }
 
 func appNames(apps []uiv1alpha1.DeployedUIApp) []string {

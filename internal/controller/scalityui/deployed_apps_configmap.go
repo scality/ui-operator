@@ -209,8 +209,11 @@ func newDeployedAppsConfigMapReducer(r *ScalityUIReconciler, cr ScalityUI, curre
 	}
 }
 
-// configMapExists returns whether the deployed-ui-apps ConfigMap already
-// exists on the API server, treating IsNotFound as a non-error.
+// configMapExists reports whether the deployed-ui-apps ConfigMap is
+// known to the controller-runtime cached client, treating IsNotFound
+// as a non-error. The cache is eventually consistent, so a freshly
+// created ConfigMap may briefly read as not-existing, which is
+// acceptable: the next reconcile will see it.
 func (r *ScalityUIReconciler) configMapExists(ctx context.Context, state State, key types.NamespacedName) (bool, error) {
 	cm := &corev1.ConfigMap{}
 	if err := state.GetKubeClient().Get(ctx, key, cm); err != nil {
