@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/scality/reconciler-framework/reconciler"
@@ -144,6 +147,47 @@ type ScalityUIReconciler struct {
 	reconciler.BaseReconciler[ScalityUI, State]
 	exposerService *services.ExposerService
 	eventMapper    *mappers.UIEventMapper
+	// First time the deployed-ui-apps reducer noticed a specific
+	// referenced component was not yet ConfigurationRetrieved=True,
+	// keyed by notReadySinceKey. Used to bound the wait window before
+	// falling through to a partial write. In-memory by design: operator
+	// restart resets the timer, granting a fresh wait window.
+	notReadySince sync.Map
+}
+
+// notReadySinceKey is the sync.Map key used to track when a specific
+// component, in the context of a specific ScalityUI, was first seen as
+// not-ready. Per-component (rather than per-CR) so a long-standing
+// failure on one component does not cause a transient flicker on
+// another to bypass the gate.
+func notReadySinceKey(uiName, componentNamespace, componentName string) string {
+	return uiName + "/" + componentNamespace + "/" + componentName
+}
+
+// notReadySincePrefix returns the prefix matching every entry recorded
+// under the given ScalityUI, used for cleanup on CR deletion.
+func notReadySincePrefix(uiName string) string {
+	return uiName + "/"
+}
+
+// clearNotReadySinceFor drops every entry tracked under the given UI.
+// Called both on CR deletion and when reconciling finds no not-ready
+// components remain.
+func (r *ScalityUIReconciler) clearNotReadySinceFor(uiName string) {
+	prefix := notReadySincePrefix(uiName)
+	r.notReadySince.Range(func(k, _ any) bool {
+		if s, ok := k.(string); ok && strings.HasPrefix(s, prefix) {
+			r.notReadySince.Delete(s)
+		}
+		return true
+	})
+}
+
+// setNotReadySinceForTest is exported for tests in this package only;
+// it lets unit tests force the gate window to be considered exceeded
+// without sleeping in real time. Production code must not call it.
+func (r *ScalityUIReconciler) setNotReadySinceForTest(uiName, componentNamespace, componentName string, t time.Time) {
+	r.notReadySince.Store(notReadySinceKey(uiName, componentNamespace, componentName), t)
 }
 
 func NewScalityUIReconciler(client client.Client, scheme *runtime.Scheme) *ScalityUIReconciler {
@@ -204,6 +248,7 @@ func (r *ScalityUIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	err := r.Client.Get(ctx, req.NamespacedName, cr)
 	if err != nil {
 		if errors.IsNotFound(err) {
+			r.clearNotReadySinceFor(req.Name)
 			return reconcile.Result{}, nil
 		}
 		return reconcile.Result{}, err

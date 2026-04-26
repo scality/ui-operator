@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/go-logr/logr"
 	uiscalitycomv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
@@ -35,6 +36,17 @@ func (s *ExposerService) FindAllExposersForUI(ctx context.Context, uiName string
 			result = append(result, exposer)
 		}
 	}
+
+	// Sort for deterministic ordering. client.List backed by an informer cache
+	// returns items in the random order of Go map iteration; downstream
+	// consumers hash the result, so any non-determinism here flaps the hash
+	// and triggers spurious deployment template patches every reconcile.
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Namespace != result[j].Namespace {
+			return result[i].Namespace < result[j].Namespace
+		}
+		return result[i].Name < result[j].Name
+	})
 
 	return result, nil
 }
