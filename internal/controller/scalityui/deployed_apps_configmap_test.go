@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	uiv1alpha1 "github.com/scality/ui-operator/api/v1alpha1"
+	"github.com/scality/ui-operator/internal/controller/scalityuicomponent"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -83,7 +84,7 @@ var _ = Describe("deployed-ui-apps partial-write race", func() {
 			comp.Status.PublicPath = s.url
 			comp.Status.Kind = s.componentName
 			meta.SetStatusCondition(&comp.Status.Conditions, metav1.Condition{
-				Type:    "ConfigurationRetrieved",
+				Type:    scalityuicomponent.ConditionTypeConfigurationRetrieved,
 				Status:  metav1.ConditionTrue,
 				Reason:  "FetchSucceeded",
 				Message: "ok",
@@ -123,7 +124,7 @@ var _ = Describe("deployed-ui-apps partial-write race", func() {
 		comp := &uiv1alpha1.ScalityUIComponent{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "metalk8s-ui", Namespace: "metalk8s-ui-ns"}, comp)).To(Succeed())
 		meta.SetStatusCondition(&comp.Status.Conditions, metav1.Condition{
-			Type:    "ConfigurationRetrieved",
+			Type:    scalityuicomponent.ConditionTypeConfigurationRetrieved,
 			Status:  status,
 			Reason:  reason,
 			Message: message,
@@ -145,7 +146,7 @@ var _ = Describe("deployed-ui-apps partial-write race", func() {
 		apps5 := decodeApps(cm.Data["deployed-ui-apps.json"])
 		Expect(apps5).To(HaveLen(5))
 		Expect(appNames(apps5)).To(ContainElement("metalk8s-ui"))
-		hash5 := cm.Annotations["scality.com/deployed-apps-hash"]
+		hash5 := cm.Annotations[deployedAppsHashAnnotation]
 		Expect(hash5).NotTo(BeEmpty(), "deployed-apps-hash annotation must be set after a successful write")
 		fmt.Fprintf(GinkgoWriter, "[step 1] full ConfigMap written, hash=%s\n", shortHash(hash5))
 
@@ -158,7 +159,7 @@ var _ = Describe("deployed-ui-apps partial-write race", func() {
 
 		Expect(k8sClient.Get(ctx, cmName, cm)).To(Succeed())
 		appsAfterFlicker := decodeApps(cm.Data["deployed-ui-apps.json"])
-		hashAfterFlicker := cm.Annotations["scality.com/deployed-apps-hash"]
+		hashAfterFlicker := cm.Annotations[deployedAppsHashAnnotation]
 		fmt.Fprintf(GinkgoWriter, "[step 2] flicker observed, ConfigMap unchanged at %d apps, hash=%s\n",
 			len(appsAfterFlicker), shortHash(hashAfterFlicker))
 
@@ -181,7 +182,7 @@ var _ = Describe("deployed-ui-apps partial-write race", func() {
 		Expect(k8sClient.Get(ctx, cmName, cm)).To(Succeed())
 		appsFinal := decodeApps(cm.Data["deployed-ui-apps.json"])
 		Expect(appsFinal).To(HaveLen(5))
-		Expect(cm.Annotations["scality.com/deployed-apps-hash"]).To(Equal(hash5),
+		Expect(cm.Annotations[deployedAppsHashAnnotation]).To(Equal(hash5),
 			"hash must be unchanged through the entire flicker scenario")
 		fmt.Fprintf(GinkgoWriter, "[step 4] condition recovered, no churn\n")
 	})
