@@ -197,6 +197,16 @@ type UIConfig struct {
 	// +kubebuilder:default=false
 	CanChangeTheme *bool `json:"canChangeTheme,omitempty"`
 
+	// CanUseGuardian controls whether the embedded Guardian AI assistant is
+	// available in the UI. It only takes effect when GuardianOrigin is also set.
+	// +kubebuilder:default=false
+	CanUseGuardian *bool `json:"canUseGuardian,omitempty"`
+
+	// GuardianOrigin is the origin (scheme + host + port, no path or query) of
+	// the embedded Guardian AI assistant. It is used as the iframe src and as
+	// the postMessage target origin.
+	GuardianOrigin string `json:"guardianOrigin,omitempty"`
+
 	// Favicon specifies the favicon for the UI
 	// +kubebuilder:default="/favicon.ico"
 	Favicon string `json:"favicon,omitempty"`
