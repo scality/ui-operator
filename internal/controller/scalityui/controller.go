@@ -51,7 +51,7 @@ func createConfigJSON(scalityui *uiscalitycomv1alpha1.ScalityUI) ([]byte, error)
 		configOutput["canChangeInstanceName"] = scalityui.Spec.UIConfig.CanChangeInstanceName
 		configOutput["canChangeLanguage"] = scalityui.Spec.UIConfig.CanChangeLanguage
 		configOutput["canChangeTheme"] = scalityui.Spec.UIConfig.CanChangeTheme
-		configOutput["canUseGuardian"] = scalityui.Spec.UIConfig.CanUseGuardian
+		configOutput["canUseGuardian"] = scalityui.Spec.UIConfig.CanUseGuardian != nil && *scalityui.Spec.UIConfig.CanUseGuardian
 		configOutput["favicon"] = scalityui.Spec.UIConfig.Favicon
 		// Only emit guardianOrigin when set; shell-ui falls back to its own
 		// default origin otherwise.
