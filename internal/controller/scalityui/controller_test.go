@@ -961,6 +961,8 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(config["canChangeTheme"]).To(Equal(false))
 				Expect(config["canChangeInstanceName"]).To(Equal(false))
 				Expect(config["canChangeLanguage"]).To(Equal(false))
+				Expect(config["canUseGuardian"]).To(Equal(false))
+				Expect(config).NotTo(HaveKey("guardianOrigin"))
 				Expect(config["favicon"]).To(Equal("/favicon.ico"))
 
 				Expect(lightTheme["type"]).To(Equal("core-ui"))
@@ -1008,6 +1010,8 @@ var _ = Describe("ScalityUI Shell Features", func() {
 					CanChangeTheme:        &[]bool{true}[0],
 					CanChangeInstanceName: &[]bool{true}[0],
 					CanChangeLanguage:     &[]bool{true}[0],
+					CanUseGuardian:        &[]bool{true}[0],
+					GuardianOrigin:        "https://guardian.example.com",
 					Favicon:               "/custom/favicon.ico",
 				}
 
@@ -1033,6 +1037,8 @@ var _ = Describe("ScalityUI Shell Features", func() {
 				Expect(config["canChangeTheme"]).To(Equal(true))
 				Expect(config["canChangeInstanceName"]).To(Equal(true))
 				Expect(config["canChangeLanguage"]).To(Equal(true))
+				Expect(config["canUseGuardian"]).To(Equal(true))
+				Expect(config["guardianOrigin"]).To(Equal("https://guardian.example.com"))
 				Expect(config["favicon"]).To(Equal("/custom/favicon.ico"))
 
 				By("Verifying custom navigation structure")

@@ -1396,9 +1396,21 @@ spec:
                     description: CanChangeTheme controls whether users can change
                       the UI theme
                     type: boolean
+                  canUseGuardian:
+                    default: false
+                    description: |-
+                      CanUseGuardian controls whether the embedded Guardian AI assistant is
+                      available in the UI. It only takes effect when GuardianOrigin is also set.
+                    type: boolean
                   favicon:
                     default: /favicon.ico
                     description: Favicon specifies the favicon for the UI
+                    type: string
+                  guardianOrigin:
+                    description: |-
+                      GuardianOrigin is the origin (scheme + host + port, no path or query) of
+                      the embedded Guardian AI assistant. It is used as the iframe src and as
+                      the postMessage target origin.
                     type: string
                 type: object
             required:
