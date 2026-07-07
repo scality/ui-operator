@@ -32,7 +32,7 @@ jobs:
           echo "prerelease=${{ github.event.release.prerelease }}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name }}
@@ -42,7 +42,7 @@ jobs:
     needs: [precheck]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name }}
@@ -72,7 +72,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name }}
@@ -87,7 +87,7 @@ jobs:
         run: make package-crds VERSION=${{ needs.precheck.outputs.tag }}
 
       - name: Upload CRD Assets
-        uses: softprops/action-gh-release@v2.3.2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/ui-operator-crds-${{ needs.precheck.outputs.tag }}.yaml

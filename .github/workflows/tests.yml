@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go with private modules
         uses: ./.github/actions/setup-go-private
@@ -48,7 +48,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go with private modules
         uses: ./.github/actions/setup-go-private
@@ -57,7 +57,7 @@ jobs:
           gh-token: ${{ secrets.GH_PAT }}
 
       - name: Login to Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
