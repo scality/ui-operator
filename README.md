@@ -2,7 +2,7 @@
 
 A Kubernetes operator for managing micro-frontend applications and UI components in a declarative way.
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/ui-operator/ui-operator)](https://goreportcard.com/report/github.com/ui-operator/ui-operator)
+[![Go Report Card](https://goreportcard.com/badge/github.com/scality/ui-operator)](https://goreportcard.com/report/github.com/scality/ui-operator)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 ## Overview
