@@ -22,7 +22,7 @@ jobs:
         uses: ./.github/actions/setup-go-private
         with:
           go-version: ${{ env.GO_VERSION }}
-          gh-token: ${{ secrets.GH_PAT }}
+          gh-token: ${{ secrets.GIT_ACCESS_TOKEN }}
 
       - name: Install dependencies
         run: go mod download
@@ -35,7 +35,7 @@ jobs:
     with:
       push-image: true
     secrets:
-      GH_PAT: ${{ secrets.GH_PAT }}
+      GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
 
   e2e:
     name: E2E Tests
@@ -54,7 +54,7 @@ jobs:
         uses: ./.github/actions/setup-go-private
         with:
           go-version: ${{ env.GO_VERSION }}
-          gh-token: ${{ secrets.GH_PAT }}
+          gh-token: ${{ secrets.GIT_ACCESS_TOKEN }}
 
       - name: Login to Registry
         uses: docker/login-action@v3

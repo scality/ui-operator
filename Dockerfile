@@ -1,8 +1,6 @@
 # Build the manager binary
 FROM golang:1.24 AS builder
 
-ARG GH_TOKEN
-
 ARG PRIVATE_REPO_HOST=github.com/scality
 
 ARG TARGETOS
@@ -12,16 +10,19 @@ WORKDIR /workspace
 
 RUN go env -w GOPRIVATE=${PRIVATE_REPO_HOST}
 
-RUN if [ -z "$GH_TOKEN" ]; then echo "GH_TOKEN is missing"; exit 1; fi && \
-    git config --global url."https://oauth2:${GH_TOKEN}@${PRIVATE_REPO_HOST}".insteadOf "https://${PRIVATE_REPO_HOST}"
-
 # Copy the Go Modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
 
-# cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
-RUN go mod download
+# Cache deps before building and copying source. Use BuildKit secret for GH_TOKEN so it
+# never appears in build args or image history. Pass with: --secret id=gh_token,env=GH_TOKEN
+RUN --mount=type=secret,id=gh_token \
+    if [ -f /run/secrets/gh_token ] && [ -s /run/secrets/gh_token ]; then \
+      token=$(cat /run/secrets/gh_token); \
+      git config --global url."https://oauth2:${token}@${PRIVATE_REPO_HOST}".insteadOf "https://${PRIVATE_REPO_HOST}"; \
+    fi && \
+    go mod download && \
+    rm -f /root/.gitconfig
 
 # Copy the go source
 COPY cmd/main.go cmd/main.go
